@@ -106,6 +106,14 @@ Not run for this revision: `docker build`, container restart and redeploy persis
 | Screenshots at 1440×900 of both tabs (fresh, and supplier after the partial reply): purpose, step, and primary button above the fold. The first capture showed the success message before the table refreshed; fixed by reloading before reporting success and re-captured | Layout as intended |
 | All browser runs used the isolated Playwright database; no reset or scenario mutation was run against `data/demo.sqlite` or any deployment | — |
 
+## 2026-10-26: Automation demo copy update (copy only)
+
+| Check | Result |
+|---|---|
+| Nav reads "Incoming items, Automation demo"; `/demo-scenarios` heading "Automated Supplier Follow-Up & Shipment Tracking" with the new subtitle; tabs "Supplier follow-up" and "Shipment tracking"; route, steps, and simulation notice unchanged | Pass (browser test) |
+| `npm run build` / `npm test` / `npm run test:e2e` | Pass / 67 passed / 5 passed (run several times) |
+| One run hit a pre-existing race in the filter test (row count read before the Destination filter re-rendered); the check now waits for the filtered table | Fixed; later runs pass |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:

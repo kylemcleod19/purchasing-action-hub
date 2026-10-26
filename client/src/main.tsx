@@ -8,7 +8,7 @@ import { DemoBanner } from './components/DemoBanner';
 import { DemoProvider, useDemo } from './demo';
 import './styles.css';
 
-/** Demo scenarios appears only when the server runs in DEMO_MODE. */
+/** The automation demo link appears only when the server runs in DEMO_MODE. */
 function MainNav() {
   const { meta } = useDemo();
   return (
@@ -16,7 +16,7 @@ function MainNav() {
       <NavLink to="/" end>
         Incoming items
       </NavLink>
-      {meta?.demoMode && <NavLink to="/demo-scenarios">Demo scenarios</NavLink>}
+      {meta?.demoMode && <NavLink to="/demo-scenarios">Automation demo</NavLink>}
     </nav>
   );
 }

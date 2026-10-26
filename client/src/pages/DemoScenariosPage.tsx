@@ -1,4 +1,4 @@
-// "Demo scenarios" page (PRD §13 "UI and acceptance additions"), linked beside Incoming items. One
+// "Automation demo" page (route /demo-scenarios) (PRD §13 "UI and acceptance additions"), linked beside Incoming items. One
 // scenario at a time, with its progression controls at the top and its results directly below. Every
 // step calls a real, persisted server mutation; progress is read back from the server, so tab switches
 // and refreshes never replay, reset, or advance anything. Emails are read-only views.
@@ -131,15 +131,18 @@ export function DemoScenariosPage() {
   const openMessage = (title: string, m: SupplierMessageView) =>
     setEmail({ title, view: { from: m.from, to: m.to, subject: m.subject, at: m.at, body: m.body, sample: false } });
 
-  if (meta && !meta.demoMode) return <p className="empty">Demo scenarios are not available on this deployment.</p>;
+  if (meta && !meta.demoMode) return <p className="empty">The automation demo is not available on this deployment.</p>;
 
   const scenario = data?.scenarios.cases.find((c) => c.key === tab);
   const busy = status?.kind === 'running';
 
   return (
-    <section className="scenarios-page" aria-label="Demo scenarios">
+    <section className="scenarios-page" aria-label="Automated Supplier Follow-Up & Shipment Tracking">
       <div className="page-heading scenarios-heading">
-        <h1>Demo scenarios</h1>
+        <div>
+          <h1>Automated Supplier Follow-Up &amp; Shipment Tracking</h1>
+          <p className="scenario-subtitle">See how supplier replies and carrier updates become delivery estimates and purchasing actions.</p>
+        </div>
         {data && (
           <p className="scenario-clock">
             Demo clock <strong>{formatClock(data.scenarios.demoClock)}</strong>
@@ -169,7 +172,7 @@ export function DemoScenariosPage() {
           const c = data?.scenarios.cases.find((x) => x.key === t.key);
           return (
             <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={tab === t.key ? 'active' : ''} onClick={() => switchTab(t.key)}>
-              {c?.title ?? (t.key === 'A' ? 'Supplier email follow-up' : 'Carrier tracking updates')}
+              {c?.title ?? (t.key === 'A' ? 'Supplier follow-up' : 'Shipment tracking')}
             </button>
           );
         })}
@@ -294,7 +297,7 @@ function ProgressToolbar({
   );
 }
 
-// ---- Supplier email follow-up ----
+// ---- Supplier follow-up ----
 
 /** The Case A request on the scenario's POs (latest first), with its call task if any. */
 function caseARequest(data: ScenarioData, scenario: ScenarioCase): { request: OutreachRequestView | null; task: CallTaskView | null } {
@@ -522,7 +525,7 @@ function AllSuppliersPreview({ preview }: { preview: OutreachPreview }) {
   );
 }
 
-// ---- Carrier tracking updates ----
+// ---- Shipment tracking ----
 
 function CarrierResults({ data, scenario }: { data: ScenarioData; scenario: ScenarioCase }) {
   const tracked = data.rows.find((r) => r.shipment?.trackingNumber === 'DEMO-TRACK-001');

@@ -48,7 +48,7 @@ export function getScenarios(db: DB): ScenariosResponse {
   const demoDate = localDate(clock);
   const notInstalled = fixturesInstalled ? null : 'Reset demo data to install the scenarios.';
 
-  // ---- Supplier email follow-up (Case A) ----
+  // ---- Supplier follow-up (Case A) ----
   const aSupplier = supplierId(db, CASE_A.supplier);
   const request = aSupplier
     ? (db.prepare('SELECT id, response_due_at AS dueAt FROM outreach_requests WHERE supplier_id = ? ORDER BY id DESC LIMIT 1').get(aSupplier) as
@@ -64,7 +64,7 @@ export function getScenarios(db: DB): ScenariosResponse {
 
   const caseA: ScenarioCase = {
     key: 'A',
-    title: 'Supplier email follow-up',
+    title: 'Supplier follow-up',
     explanation: 'Request arrival confirmations, process a partial reply, and escalate unanswered items to purchasing.',
     summary: `${CASE_A.supplier}: ${CASE_A.poNumbers.join(' and ')}.`,
     supplierId: aSupplier,
@@ -121,7 +121,7 @@ export function getScenarios(db: DB): ScenariosResponse {
     ],
   };
 
-  // ---- Carrier tracking updates (Case B) ----
+  // ---- Shipment tracking (Case B) ----
   const eventDone = (key: string) => !!db.prepare('SELECT 1 FROM carrier_events WHERE external_event_id = ?').get(CARRIER_FIXTURES[key].externalEventId);
   const eta = (key: string) => formatDate(CARRIER_FIXTURES[key].payload(anchor).eta ?? null);
   const delayDone = eventDone('case-b-delay');
@@ -132,7 +132,7 @@ export function getScenarios(db: DB): ScenariosResponse {
   const deliveredAt = caseBDeliveredAt(anchor);
   const caseB: ScenarioCase = {
     key: 'B',
-    title: 'Carrier tracking updates',
+    title: 'Shipment tracking',
     explanation: 'Apply a shipment delay to its linked items while preserving unshipped quantities and warehouse receipt status.',
     summary: `${CASE_B.carrier} ${CASE_B.tracking} (${CASE_B.shipment}, simulated, not a live carrier).`,
     supplierId: supplierId(db, CASE_B.supplier),

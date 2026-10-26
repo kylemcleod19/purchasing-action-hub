@@ -332,6 +332,8 @@ test('tracking from the normal seed, destination/program filters, and URL round-
   await expect(south).toBeChecked();
   await page.keyboard.press('Escape');
   await expect(page).toHaveURL(/destination=\d+/);
+  // Wait for the filtered table to render before counting.
+  await expect.poll(() => incomingRows(page).count()).toBeLessThan(allCount);
   const southCount = await incomingRows(page).count();
   expect(southCount).toBeGreaterThan(0);
   expect(southCount).toBeLessThan(allCount);
@@ -380,13 +382,15 @@ const doneKeys = async (page: Page) =>
 test('supplier scenario: purpose and next action up front, read-only emails, progress survives tabs and reload', async ({ page }) => {
   await resetDemo(page);
   await page.goto('/');
-  // Demo scenarios is its own page, linked beside Incoming items.
+  // The automation demo is its own page, linked beside Incoming items.
   const nav = page.getByRole('navigation');
-  await expect(nav.getByRole('link')).toHaveText(['Incoming items', 'Demo scenarios']);
-  await nav.getByRole('link', { name: 'Demo scenarios' }).click();
+  await expect(nav.getByRole('link')).toHaveText(['Incoming items', 'Automation demo']);
+  await nav.getByRole('link', { name: 'Automation demo' }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Automated Supplier Follow-Up & Shipment Tracking');
+  await expect(page.getByText('See how supplier replies and carrier updates become delivery estimates and purchasing actions.')).toBeVisible();
   await expect(page).toHaveURL(/\/demo-scenarios$/);
   await expect(page.getByText('Simulated emails and carrier events; no messages are sent.')).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Supplier email follow-up' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Supplier follow-up' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText('Request arrival confirmations, process a partial reply, and escalate unanswered items to purchasing.')).toBeInViewport();
 
   const toolbar = page.locator('.scenario-toolbar');
@@ -445,10 +449,10 @@ test('supplier scenario: purpose and next action up front, read-only emails, pro
   expect(await doneKeys(page)).toEqual(before);
 
   // Tab switches and reload restore progress from the server; nothing runs.
-  await page.getByRole('tab', { name: 'Carrier tracking updates' }).click();
+  await page.getByRole('tab', { name: 'Shipment tracking' }).click();
   await expect(page).toHaveURL(/scenario=carrier/);
   await expect(current).toContainText('Apply carrier delay');
-  await page.getByRole('tab', { name: 'Supplier email follow-up' }).click();
+  await page.getByRole('tab', { name: 'Supplier follow-up' }).click();
   await expect(current).toContainText('Reach follow-up deadline');
   await page.reload();
   await expect(current).toContainText('Reach follow-up deadline');
@@ -485,7 +489,7 @@ test('supplier scenario: purpose and next action up front, read-only emails, pro
 test('carrier scenario: delay reaches linked rows only; carrier Delivered stays separate from warehouse Received', async ({ page }) => {
   const D = await resetDemo(page);
   await page.goto('/demo-scenarios?scenario=carrier');
-  await expect(page.getByRole('tab', { name: 'Carrier tracking updates' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Shipment tracking' })).toHaveAttribute('aria-selected', 'true');
   await expect(
     page.getByText('Apply a shipment delay to its linked items while preserving unshipped quantities and warehouse receipt status.'),
   ).toBeInViewport();

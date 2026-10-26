@@ -1106,7 +1106,7 @@ button.manage-button.needs-action {
   color: var(--accent);
 }
 
-/* Demo scenarios page */
+/* Automation demo page (/demo-scenarios) */
 .scenarios-heading {
   display: flex;
   align-items: baseline;
@@ -1304,4 +1304,9 @@ tr.remainder-row td {
   color: var(--warn);
   padding: 4px 8px;
   border-radius: 4px;
+}
+
+.scenario-subtitle {
+  margin: 2px 0 0;
+  color: var(--muted);
 }

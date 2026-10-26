@@ -16,7 +16,7 @@ follow up on. They can record agreed arrival changes and delivery splits.
   issue and white otherwise. Received-only rows open it read-only as **View deliveries**.
 - **Shipment tracking in the seed:** every in-transit and received delivery has a shipment with a fictional
   carrier and a synthetic tracking number (`DEMO-TRACK-###`), except one deliberately untracked dispatch.
-- **Two simulated collection scenarios** (PRD §13), driven by deterministic fixtures from the **Demo scenarios**
+- **Two simulated collection scenarios** (PRD §13), driven by deterministic fixtures from the **Automation demo**
   page (linked next to Incoming items): Case A (supplier outreach, partial reply, call task at the deadline) and Case B (one carrier delay
   across several items). They make real, persisted changes through the same update and issue services.
 - **Actions that persist:** expected-arrival updates (date or unknown, source, optional note), splits of
@@ -96,7 +96,7 @@ endpoint and the simulation controls; default `true`), `NODE_ENV`.
 Business dates are generated relative to a **demo date**, which is stored when the database is first
 seeded and shown in the banner. A simulated **demo clock** (stored in UTC, shown in America/Chicago) starts at
 10:00 local time on that date. Normal browsing and restarts never move either one. Only the explicit
-**Advance** controls on the Demo scenarios page move the clock, and only forward. Each move reconciles
+**Advance** controls on the Automation demo page move the clock, and only forward. Each move reconciles
 newly overdue deliveries and due call tasks once. **Reset demo data** (in the banner, with a confirmation)
 replaces all data with the baseline, clears simulated messages, tasks, and carrier events, and sets the demo
 date and clock to the current UTC date. Reset is a demo utility, not a workflow, and it affects every
@@ -130,7 +130,7 @@ The demo records are PO **PO-DEMO-01** (Cobalt Harness Works, part HX-2210, 100 
 
 ## Scenario demos (simulated collection, PRD §13)
 
-Open **Demo scenarios** from the header link next to Incoming items (shown only when `DEMO_MODE` is on). The page
+Open **Automation demo** (page title *Automated Supplier Follow-Up & Shipment Tracking*) from the header link next to Incoming items (shown only when `DEMO_MODE` is on). The page
 shows one scenario at a time in two tabs. Under each tab's one-line purpose, a sticky toolbar holds a step indicator,
 the current step and what it will do (with actual dates), and one primary button with an explicit label. Results
 appear in a table directly below. Progress is read back from the server, so switching tabs or refreshing never
@@ -141,7 +141,7 @@ seeded reply is processed it can only be previewed, labeled *Sample reply*. Both
 run the supplier scenario before advancing to the carrier delivery time, or reset in between. *About this demo*
 explains the fixtures; reset sits apart at the bottom and keeps its confirmation.
 
-**Supplier email follow-up (Kestrel Precision Machining, PO-24105 and PO-24116).** POs were created at D-20 with
+**Supplier follow-up (Kestrel Precision Machining, PO-24105 and PO-24116).** POs were created at D-20 with
 required dock D+3 and production start D+5.
 1. **Request confirmation** (*Simulate sending request*). The table lists the eight selected not-shipped lines,
    last confirmed at D-7 and expected at D+2. *Why other items weren't contacted* lists line 7 and line 8
@@ -157,7 +157,7 @@ required dock D+3 and production start D+5.
 4. **Process clarification** (*Process clarification email*). Both items are answered. The unstarted task
    closes as *Answered by supplier*, and the late issues stay open for the buyer.
 
-**Carrier tracking updates (Granite Bearing Co., PO-24101 and PO-24117).** Shipment SH-DEMO-01 (Demo Freight
+**Shipment tracking (Granite Bearing Co., PO-24101 and PO-24117).** Shipment SH-DEMO-01 (Demo Freight
 `DEMO-TRACK-001`, not a live carrier) carries 30 of 50 on PO-24101 line 1, PO-24101 line 2, and PO-24117 line 1.
 The other 20 on line 1 are a separate not-shipped commitment, shown as its own row.
 1. **Apply carrier delay** moves exactly those three rows to D+6 and opens three issues. Two are production
