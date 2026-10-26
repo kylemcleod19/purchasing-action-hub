@@ -1,25 +1,25 @@
 // Display labels. PRD §5 vocabulary lives here so wording can change in one place.
-import type { AttentionReason, DateStatus, DeliveryState, UpdateSource } from './types.js';
+import type { DeliveryState, IssueReason, ResolutionOutcome, UpdateSource } from './types.js';
 
 export const DELIVERY_STATE_LABELS: Record<DeliveryState, string> = {
-  planned: 'Planned delivery',
+  planned: 'Not shipped',
   in_transit: 'In transit',
   received: 'Received',
 };
 
-export const ATTENTION_LABELS: Record<AttentionReason, string> = {
-  date_conflict: 'Late',
-  arrival_overdue: 'Arrival overdue',
-  date_unknown: 'Date unknown',
-  follow_up_due: 'Follow-up due',
-  none: 'No identified date issue',
+export const REASON_LABELS: Record<IssueReason, string> = {
+  production_conflict: 'Production conflict',
+  late: 'Late',
+  overdue: 'Overdue',
+  unknown: 'Date unknown',
+  moved_later: 'Estimate moved later',
 };
 
-export const DATE_STATUS_LABELS: Record<DateStatus, string> = {
-  late: 'Late',
-  unknown: 'Date unknown',
-  no_conflict: 'No date conflict',
-  received: 'Received',
+export const OUTCOME_LABELS: Record<ResolutionOutcome, string> = {
+  accepted_delay: 'Accepted delay',
+  date_restored: 'Date restored',
+  split_agreed: 'Split delivery agreed',
+  reviewed: 'Reviewed / no further action',
 };
 
 export const SOURCE_LABELS: Record<UpdateSource | 'po_schedule', string> = {
@@ -27,7 +27,7 @@ export const SOURCE_LABELS: Record<UpdateSource | 'po_schedule', string> = {
   supplier_call: 'Supplier call',
   carrier_update: 'Carrier update',
   other: 'Other',
-  po_schedule: 'Initial PO schedule',
+  po_schedule: 'Initial schedule',
 };
 
 export function sourceLabel(source: string | null): string {
@@ -36,13 +36,19 @@ export function sourceLabel(source: string | null): string {
 }
 
 export const EVENT_LABELS: Record<string, string> = {
-  arrival_updated: 'Expected arrival updated',
-  delivery_split: 'Planned delivery split',
-  follow_up_added: 'Follow-up added',
-  follow_up_edited: 'Follow-up edited',
-  follow_up_completed: 'Follow-up completed',
-  follow_up_moved: 'Follow-up moved to PO level',
+  arrival_updated: 'Arrival updated',
+  delivery_split: 'Delivery split',
+  issue_opened: 'Issue opened',
+  issue_updated: 'Issue reasons changed',
+  issue_resolved: 'Issue resolved',
+  issue_superseded: 'Issue carried to split',
+  follow_up_added: 'Reminder added',
+  follow_up_edited: 'Reminder edited',
+  follow_up_completed: 'Reminder completed',
+  follow_up_moved: 'Reminder moved to PO level',
 };
 
-export const PROCESSING_TIME_NOTE =
-  'Date checks compare expected arrival with the work order’s production start only. All material is assumed needed at start. Receiving and inspection time are not modeled, so an arrival on the start date is not flagged.';
+export const DEMO_ACTOR_NOTE = 'Actor is the PO buyer (demo actor; no login).';
+
+export const DATE_RULES_NOTE =
+  'Late: expected arrival after required dock date. Production conflict: expected arrival after production start. Equal dates are not flagged; receiving and inspection time are not modeled.';

@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { seedDatabase } from './seed.js';
+import { reconcileIssues } from '../services/issues.js';
 import { todayUtc } from '../../shared/dates.js';
 
 export type DB = Database.Database;
@@ -50,13 +51,24 @@ export function getDemoDate(db: DB): string {
 /** Migrates, then seeds only when the database has never been seeded. Returns whether it seeded. */
 export function initializeDatabase(db: DB, demoDate: string = todayUtc()): boolean {
   migrate(db);
-  if (getMeta(db, 'seeded_at')) return false;
+  if (getMeta(db, 'seeded_at')) {
+    // Data seeded before issues existed (migration 003): open issues once for current exceptions.
+    if (!getMeta(db, 'issues_initialized')) {
+      db.transaction(() => {
+        const now = new Date().toISOString();
+        reconcileIssues(db, getDemoDate(db), now);
+        db.prepare("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('issues_initialized', ?)").run(now);
+      })();
+    }
+    return false;
+  }
   db.transaction(() => seedDatabase(db, demoDate))();
   return true;
 }
 
 const DATA_TABLES = [
   'change_history',
+  'delivery_issues',
   'follow_ups',
   'deliveries',
   'po_lines',

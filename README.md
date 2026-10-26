@@ -7,8 +7,13 @@ follow up on. They can record agreed arrival changes and delivery splits.
 - **Two connected views:** Incoming items (landing page) and Purchase-order detail (Deliveries / Follow-ups tabs).
 - **One work order per PO:** each PO belongs to exactly one work order, and its items and deliveries
   inherit that work order's production start. A work order may have several POs.
+- **Buyer action is separate from physical risk:** a delivery gets at most one open *issue* when it
+  becomes late, conflicts with production, goes overdue, loses its date, or moves later. The buyer
+  resolves it inline (Accepted delay, Date restored, Split delivery agreed, or Reviewed). Date warnings
+  stay visible after resolution.
 - **Actions that persist:** expected-arrival updates (date or unknown, source, optional note), splits of
-  planned deliveries into dated quantities, supplier follow-ups, change history, and demo reset.
+  not-shipped deliveries, issue resolution (alone or with the edit, in one save), optional reminders,
+  change history, and demo reset.
 - **Synthetic data only.** All visitors share one dataset. No emails, PO amendments, supplier messages,
   or integrations of any kind.
 
@@ -44,6 +49,21 @@ v1 database starts on this version, the migration drops the synthetic demo data 
 seeded with a new demo date. Edits made in v1 are discarded once. The migration is recorded in
 `schema_migrations` and never runs again, so later edits persist normally.
 
+**v3 migration (issues and dock dates) keeps existing data.** Migration `003_issues_and_dock_dates.sql`
+adds required dock dates, receipt dates, a separate arrival-update timestamp, history actors, and the
+`delivery_issues` table. It keeps all deliveries, edits, and history:
+- Items with no dock baseline get a one-time fallback of their work order's production start. This means
+  migrated data shows no *late without production conflict* cases.
+- v2 receipt dates and arrival-update timestamps carry over. v2 only wrote these on arrival updates and
+  splits, never on follow-ups.
+- On the first start after the migration, open issues are created once for current exceptions. This is
+  guarded by an `issues_initialized` marker and a one-open-issue-per-delivery index. Completed
+  reminders are not treated as buyer acceptance.
+
+The banner says when data predates the current seed. Use **Reset demo data** (with confirmation) to
+load the v3 scenarios: supplier catalogs, explicit dock dates, and seeded open, accepted, date-restored,
+and split issues. Nothing resets automatically.
+
 | Command | What it does |
 |---|---|
 | `npm run dev` | API (tsx watch) and Vite dev server together |
@@ -66,55 +86,75 @@ every visitor.
 
 ## Primary demo (about 3 minutes)
 
-The demo records are PO **PO-DEMO-01** (part HX-2210, 100 EA) for work order **WO-DEMO-A**, which has a
-production start of D+7. D is the demo date.
+The demo records are PO **PO-DEMO-01** (Cobalt Harness Works, part HX-2210, 100 EA) for work order
+**WO-DEMO-A**: required dock D+5 and production start D+7. D is the demo date.
 
-1. On **Incoming items**, choose **All outstanding** and search `PO-DEMO-01`. The expected arrival (D+5)
-   sits next to the production start (D+7), and the row shows no identified date issue.
-2. Click **Update arrival**, enter D+16 with source *Supplier email*, leave the note blank, and save. All
-   100 units are now *Late*, with "9 days after start" beneath the date. Last update shows today with an
-   envelope icon.
-3. Click **Open PO**. The header shows WO-DEMO-A and the production start. Click **Split** on the delivery
-   and enter 40 at D+6 and 60 at D+16. The preview shows the 40 with no date conflict and the 60 late.
-   Save.
-4. The item row reads Ordered 100, Planned 100, In transit 0, Received 0, Late 60. Its expanded delivery
-   table shows the 40 with no identified date issue and the 60 as *Late*. WO-DEMO-A remains at risk,
-   because all material is needed at start.
-5. Add a follow-up on the 60-unit delivery. On the **Follow-ups** tab, complete it. Back on
-   **Deliveries**, the 60 is still late and its Last update has not changed, because completing a task
-   never changes dates or clears risk.
-6. Try the delivery-state filter (for example *In transit* shows an empty state, and the item totals
-   never change). Refresh the page and the changes and the filter persist. Use **Reset demo data** to
-   restore the baseline.
+1. On **Incoming items**, choose **All outstanding** and search `PO-DEMO-01`. Required dock (D+5),
+   Expected arrival (D+5), and Production start (D+7) sit side by side, and there is no issue.
+2. Click **Update arrival**, enter D+16 with source *Supplier email*, leave the note blank, and click
+   **Save changes**. One issue opens, and the confirmation names its reasons. The expected arrival shows
+   a late warning (11 days after dock), and the production start shows a production-conflict marker
+   (9 days).
+3. Open the PO from the PO link; the item is already expanded. On the delivery, click **Split** and enter
+   40 at D+5 and 60 at D+16. With *Split delivery agreed* as the outcome, click **Save and resolve issue**.
+   This is one save; you don't need to go to Follow-ups.
+4. The item row reads Ordered 100, Shipped 0, Received 0. Arrivals shows both dates with quantities in
+   parentheses, and the 60 keeps its warning. No action badge remains. Production risk for WO-DEMO-A
+   persists, because all material is needed at start.
+5. On the 60-unit delivery, **Update arrival** to D+18 and **Save changes**. A new issue opens, linked to
+   the earlier one. Click **Resolve** and then **Accept delay and resolve**; the date is not changed.
+6. On **Follow-ups**, add a reminder and complete it. Arrival dates, Last update, and the resolution don't
+   change. Try the filters: *Needs action* is now empty, *Resolved issues* shows the item, and totals
+   never change. Refresh to confirm everything and the filters persist. In Incoming items the 60 is no
+   longer in *Needs action* but still appears under *Late*. **Reset demo data** restores the baseline.
 
-The seed has 20 work orders: five have two POs and fifteen have one. It also includes these examples:
-arrival before production start, known late arrival, missing expected arrival, arrival overdue with no
-receipt, follow-up due with an otherwise timely arrival (PO-24107), an in-transit delivery with a
-carrier-sourced manual update (PO-24111), PO items with two deliveries on different dates, and received
-lines shown read-only. Other seeded deliveries show *Initial PO schedule* as their Last update source,
-because no supplier email or call is invented.
+The seed has 20 suppliers, each selling one coherent part family. Each of the five largest suppliers
+holds one ten-line PO from its own catalog. There are 25 POs, 80 items, and 20 work orders (five with two
+POs). Examples:
+- Arrival before production start.
+- Late without production conflict (PO-24108).
+- Missing date (PO-24109).
+- Overdue with no receipt (PO-24110).
+- Reminder due with a timely arrival (PO-24107).
+- Carrier update that opened an issue (PO-24111).
+- Received line (PO-24112).
+- Date-restored resolution (PO-24113).
+- Split agreed with one late child (PO-24114).
+- Accepted delay that a worse date will reopen (PO-24115).
+- Items with deliveries on different dates for the same work order.
 
 ## Rules worth knowing
 
-- Comparisons are on date-only `YYYY-MM-DD` strings, so results are the same in any browser timezone.
-  History timestamps are UTC.
-- *Late* means the expected arrival is later than the linked production start. Arriving on the start
-  date is not flagged. Receiving and inspection time are not modeled, and the UI says so.
-- An unknown date is never treated as on time. Received deliveries carry no active date alerts.
-- Each delivery is evaluated against its PO's single work-order production start. Each PO item shows
-  late and unknown-date quantities separately, and quantities of different parts are never summed.
-- Attention order is: date conflict, arrival overdue, date unknown, follow-up due, no identified date
-  issue. Within each group, rows are sorted by the PO's production start, with unknown starts last. This
-  is a simple demo ordering rule, not an optimized priority.
-- *Last update* is the date and source of the latest arrival-information change. It is not a delivery
-  date, and follow-ups never change it.
-- Every mutation uses a version precondition and runs in one transaction. Stale or repeated submits
-  get HTTP 409 and change nothing. Only planned deliveries can be split. Split deliveries stay on the
-  same PO item and work order. The original row is kept (superseded) for history, and open
-  delivery-level follow-ups move to the PO level.
+- Comparisons use date-only `YYYY-MM-DD` strings, so results are the same in any browser timezone.
+  History timestamps are UTC, and overdue checks use the persisted demo date.
+- *Late*: the expected arrival is after the required dock date. *Production conflict*: the expected
+  arrival is after production start. Equal dates are not flagged, because receiving and inspection time
+  are not modeled.
+- An unknown date is never treated as on time. Received deliveries show the actual receipt date and have
+  no active alerts.
+- Issue rules ([shared/issues.ts](shared/issues.ts)):
+  - A delivery has at most one open issue.
+  - **Save changes** keeps an open issue open, even if the date becomes on time.
+  - **Save and resolve** applies the edit and the disposition atomically.
+  - After a resolution, identical facts, source- or note-only edits, and improved dates with the same
+    accepted risks don't reopen the issue. A later estimate, a new unknown date, or a newly active risk
+    reason (such as overdue) opens a new issue linked to the old one.
+  - Date restored is validated on the server.
+- Splits:
+  - With **Save changes**, the open review moves to every child, even on-time ones.
+  - With **Save and resolve**, the outcome is recorded on the parent, and each child gets a resolved
+    disposition against its saved facts.
+  - In-transit and received deliveries can't be split.
+- Item quantities are cumulative: Shipped includes received units, so Received ≤ Shipped ≤ Ordered.
+  Filters never change these totals.
+- *Last update* is the date and source of the latest arrival-information change. Resolutions, reminders,
+  and notes never change it. Resolutions record the PO buyer as a labeled demo actor (there is no login).
+- Every mutation checks delivery and issue versions and runs in one transaction. Stale or repeated
+  submits get HTTP 409 and change nothing.
 
-The rule functions are in [shared/impact.ts](shared/impact.ts) and the display wording is in
-[shared/labels.ts](shared/labels.ts).
+Rule functions are in [shared/impact.ts](shared/impact.ts) (physical risk),
+[shared/issues.ts](shared/issues.ts) (issue transitions), and [shared/arrivals.ts](shared/arrivals.ts)
+(item table ordering and quantities). Display wording is in [shared/labels.ts](shared/labels.ts).
 
 ## Deployment (Railway)
 

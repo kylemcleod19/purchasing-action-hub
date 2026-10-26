@@ -4,7 +4,7 @@ Companion: PRD.md
 Status: Recommended defaults; Railway hosting is the user's requirement
 
 ## 1. Architecture decision
-Start a new repository. Build one TypeScript application: React/Vite frontend, Express API, and SQLite persistence. In production, Express serves both the built frontend and API from one Railway service. Use one Railway persistent volume for SQLite.
+For an existing implementation, update in place and preserve its Railway setup. Scaffold a new repository only if none exists. Use one TypeScript application: React/Vite frontend, Express API, and SQLite persistence. In production, Express serves both the built frontend and API from one Railway service. Use one Railway persistent volume for SQLite.
 
 This is a small shared interview demo, not a scalable enterprise platform. One process, one database file, and one deployment keep local development and edits straightforward. SQLite is a deliberate prototype trade-off: one replica, brief deployment downtime acceptable, no distributed writes. Postgres can replace persistence later if needed; do not build that migration now.
 
@@ -46,15 +46,24 @@ Use IDs and foreign keys, plus timestamps where needed:
 | warehouses | id, name |
 | work_orders | id, number, program, warehouse_id, production_start |
 | purchase_orders | id, number, supplier_id, warehouse_id, work_order_id NOT NULL, buyer, status |
-| po_lines | id, po_id, part_number, description, unit, ordered_qty |
-| deliveries | id, po_line_id, quantity, state, expected_arrival nullable, source, updated_at, version, superseded_at nullable |
+| po_lines | id, po_id, part_number, description, unit, ordered_qty, required_dock_date NOT NULL |
+| deliveries | id, po_line_id, quantity, state, expected_arrival nullable, source, arrival_updated_at, received_at nullable, parent_delivery_id nullable, version, superseded_at nullable |
+| delivery_issues | id, delivery_id, state (open/resolved/superseded), reasons_json, opened_at, resolved_at nullable, resolved_by nullable, outcome nullable, note nullable, reviewed_facts_json nullable, previous_issue_id nullable, parent_issue_id nullable, version |
 | follow_ups | id, po_id, delivery_id nullable, due_date, note, state, completion_note, completed_at, version |
 | change_history | id, po_id, delivery_id nullable, event_type, before_json, after_json, source, note, created_at |
 | app_metadata | key, value (schema/seed version and demo reference date) |
 
 Each purchase_order has one required work_order_id foreign key. Multiple POs may reference the same work order. All PO items and deliveries inherit this relationship through the PO; do not create work_order_links or delivery_links allocation tables. Verify PO and work order warehouse consistency. Seed 20 work orders for 25 POs as specified in PRD.md. Keep superseded deliveries for history but exclude them from current totals. API responses include work-order number and production_start for the PO and each incoming row.
 
-On split, transactionally supersede the original, create child deliveries under the same PO item, reattach any open delivery-level follow-ups to the PO level with original context preserved, and append history. Do not delete historical follow-ups.
+Delivery state enum can remain planned/in_transit/received internally; display planned as Not shipped. Store actual received date for seeded received rows. Require required_dock_date <= production_start in this demo. Dates remain independent of current estimates.
+
+On split, transactionally supersede the original, create children with parent_delivery_id under the same PO item, apply the issue inheritance/disposition rules in PRD section 7, move open delivery-level follow-ups to the PO level with their original context retained, and append history. Do not delete historical issues or follow-ups.
+
+Add a partial unique index for one open issue per delivery. Keep resolved rows as history; reopening creates a new row rather than overwriting a resolution. reviewed_facts_json captures expected arrival, state, quantity, required dock, production start, evaluated risk reasons, and demo date at disposition. Store explicit arrival_updated_at separately from row/version changes, issue resolution, and follow-up events.
+
+Use one shared pure function for physical risk and one explicit issue transition function. Physical risk is derived; issue disposition is persisted. Issue transitions run during mutations, initial seed, or an explicit reconciliation when upstream facts/demo date change. GET endpoints must not repeatedly manufacture issues. Demo date is fixed during normal use; no background scheduler or live connector is needed.
+
+A later estimate, known-to-unknown transition, or newly active risk reason opens a new issue after resolution. Identical facts, notes/source-only edits, and improved dates with the same accepted risks do not reopen it. Save changes retains any existing open issue even when physical risk clears. The server validates Date restored against required dock/overdue rules. See PRD for split child issue behavior; do not merely copy an open parent ID to multiple children.
 
 Use a version precondition on each mutation; return HTTP 409 for stale edits. A split can only consume an active source row once. Reset is transactional and explicitly initiated; it is never part of normal startup.
 
@@ -62,12 +71,19 @@ Use a version precondition on each mutation; return HTTP 409 for stale edits. A 
 A compact JSON API is enough:
 - GET /api/incoming: current delivery rows, calculated attention, follow-up summaries.
 - GET /api/purchase-orders/:id: detail, work-order impacts, history, tasks.
-- PATCH /api/deliveries/:id: arrival/source/note and expected version.
-- POST /api/deliveries/:id/split: child quantities/dates and expected version.
+- PATCH /api/deliveries/:id: arrival/source/optional note, expected delivery version, optional resolution payload and expected issue version.
+- POST /api/deliveries/:id/split: child quantities/dates, source/optional note, expected delivery version, optional resolution payload and expected issue version.
+- POST /api/deliveries/:id/resolve: current issue ID, expected issue and delivery versions, outcome, optional note; no date change required.
 - POST /api/purchase-orders/:id/follow-ups
 - PATCH /api/follow-ups/:id: edit/complete with expected version.
 - POST /api/demo/reset: reset confirmation, available only in DEMO_MODE.
 - GET /api/health: return 200 only after migrations, initial seed, and database readiness.
+
+Arrival/split requests use an explicit optional resolve object containing issue_id, expected_issue_version, outcome, and optional note. Absence means Save changes. Resolve must target the exact open issue, not “whatever is current.” Use the PO buyer as the documented demo actor on the server. Return 409 for stale issue/delivery state and 422 for invalid outcomes or quantities.
+
+Within one database transaction: check versions, validate proposed changes, write deliveries, evaluate physical risk and issue transitions, apply requested disposition (including split child dispositions), and write history. Return updated rows/issue summaries; never issue separate client-side save and resolve requests for the combined action. Failure rolls back everything. Version checks and the active-parent constraint make repeated requests safe.
+
+API DTOs expose required dock date, expected arrival, received date, production start, arrival-update source/time, physical risk flags/days, and current open issue separately. Item DTOs expose ordered_qty, shipped_qty (in-transit plus received), received_qty, and open_issue_count. Never derive Needs action solely from lateness. Filters for physical Late and open Needs action are independent. Use consistent full totals and matching delivery subsets across both pages.
 
 Server validates every mutation and computes authoritative impacts. Client previews may reuse shared pure functions, but must not be the only validation. Return consistent JSON errors and useful field messages. Unknown API routes return JSON 404, never index.html.
 
@@ -145,8 +161,17 @@ Required checks:
 Keep rule functions and display labels easy to locate for live interview modifications. Do not write exhaustive UI snapshot suites or test trivial styling. Record tests actually run and any deployment checks still pending.
 
 ## 11. First instruction to Claude
-Read docs/PRD.md and docs/ARCHITECTURE.md. Initialize this fresh repository using the recommended defaults. First provide a short implementation sequence, then implement the first working slice: persisted seed data, Incoming items, and PO detail. Continue through the specified slices without adding workflows. Keep the old project's requirements out of this repo. Finish with build/test results and Railway setup status. Ask only when a material product decision blocks progress.
+Read docs/PRD.md and docs/ARCHITECTURE.md. Inspect the existing app and implement the changes in small slices without rebuilding working infrastructure. If the repository is empty, scaffold the recommended defaults. Prioritize schema migration, shared risk/issue rules, table presentation, and atomic inline resolution. Continue through the specified slices without adding workflows. Keep the old project's requirements out of this repo. Finish with build/test results and Railway setup status. Ask only when a material product decision blocks progress.
 
 
 ## 12. Existing implementation alignment
 If the initial multi-work-order schema has already been built, replace its allocation joins/UI with the single required PO work_order_id relationship. For this synthetic demo, use an explicit versioned demo-data migration/reset with the changed seed; do not arbitrarily pick a work order from conflicting legacy links or silently discard edits at every startup. Document the one-time reset. Preserve Railway configuration and unrelated working features.
+
+## 13. Migration and focused verification for this revision
+No new service, queue, AI dependency, or deployment architecture is required. Preserve React/Express/SQLite and the Railway volume. This revision changes schema, domain rules, API payloads, and table/form presentation.
+
+Use an ordered migration to add required dock dates, received dates, issue history, delivery lineage, and separate arrival timestamps. Existing required dock dates must come from seed/upstream facts; never use a changed expected arrival as the baseline silently. For synthetic legacy records without a baseline, document a one-time fallback to production start, or offer the explicitly confirmed updated-seed reset. Do not reset on every startup. Historical received dates must not be invented; use an unknown-date display for legacy records until explicit reseed supplies them. Backfill arrival timestamps from arrival history where available, not from follow-up completion.
+
+Initialize issue rows once for existing outstanding exceptions; a migration marker and unique-open constraint prevent duplicates. Preserve existing edits and history unless Kyle explicitly resets the demo. Do not infer previous buyer acceptance from a completed reminder. Keep independent issue and follow-up tables.
+
+Test shared risk/quantity calculations, transitions after resolution, atomic save-and-resolve and split dispositions, stale issue/delivery guards, and filtered table totals. Extend the core browser scenario to prove accepted lateness remains visible, a worse date reopens an issue, and the buyer can resolve it without visiting Follow-ups. Validate native SQLite/build and persistence using existing checks; avoid unrelated framework upgrades.

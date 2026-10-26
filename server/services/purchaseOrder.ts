@@ -1,6 +1,6 @@
 import type { DB } from '../db/db.js';
 import { loadDeliveryRows } from './incoming.js';
-import { itemImpact } from '../../shared/impact.js';
+import { itemQuantities } from '../../shared/arrivals.js';
 import type { FollowUp, HistoryEntry, PoLineDetail, PurchaseOrderDetail } from '../../shared/types.js';
 
 export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): PurchaseOrderDetail | null {
@@ -17,26 +17,23 @@ export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): 
     .get(poId) as PurchaseOrderDetail['po'] | undefined;
   if (!po) return null;
 
-  const rows = loadDeliveryRows(db, demoDate)
-    .filter((r) => r.poId === poId)
-    .sort((a, b) => a.deliveryId - b.deliveryId);
+  // Deliveries keep the shared ordering (open issues, production conflict, dates, id).
+  const rows = loadDeliveryRows(db, demoDate).filter((r) => r.poId === poId);
 
   const lines = (
     db
       .prepare(
-        `SELECT id, line_no AS lineNo, part_number AS partNumber, description, unit, ordered_qty AS orderedQty
+        `SELECT id, line_no AS lineNo, part_number AS partNumber, description, unit, ordered_qty AS orderedQty,
+                required_dock_date AS requiredDock
          FROM po_lines WHERE po_id = ? ORDER BY line_no`,
       )
-      .all(poId) as Pick<PoLineDetail, 'id' | 'lineNo' | 'partNumber' | 'description' | 'unit' | 'orderedQty'>[]
+      .all(poId) as Pick<PoLineDetail, 'id' | 'lineNo' | 'partNumber' | 'description' | 'unit' | 'orderedQty' | 'requiredDock'>[]
   ).map((line): PoLineDetail => {
     const deliveries = rows.filter((r) => r.poLineId === line.id);
-    const qty = (state: string) => deliveries.filter((d) => d.state === state).reduce((s, d) => s + d.quantity, 0);
     return {
       ...line,
-      plannedQty: qty('planned'),
-      inTransitQty: qty('in_transit'),
-      receivedQty: qty('received'),
-      ...itemImpact(po.productionStart, deliveries),
+      ...itemQuantities(deliveries),
+      openIssueCount: deliveries.filter((d) => d.issue !== null).length,
       deliveries,
     };
   });
@@ -56,7 +53,7 @@ export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): 
   const history = (
     db
       .prepare(
-        `SELECT id, delivery_id AS deliveryId, event_type AS eventType, before_json, after_json, source, note,
+        `SELECT id, delivery_id AS deliveryId, event_type AS eventType, before_json, after_json, actor, source, note,
                 created_at AS createdAt
          FROM change_history WHERE po_id = ? ORDER BY created_at DESC, id DESC`,
       )

@@ -13,7 +13,9 @@ and `docs/ARCHITECTURE.md` (stack, persistence, deployment). They are the author
 - Synthetic data only. Do not invent research, user validation, or business results.
 
 ## Where things live
-- `shared/impact.ts`: date-impact and attention rules (single source; server-authoritative).
+- `shared/impact.ts`: physical date risk. `shared/issues.ts`: the issue transition rule. `shared/arrivals.ts`:
+  item-table ordering and cumulative quantities. All pure and server-authoritative.
+- Issues (buyer action) and reminders (follow_ups) are independent; neither changes the other or Last update.
 - `shared/labels.ts`: user-facing vocabulary. `shared/schemas.ts`: request validation.
 - `server/services/`: mutations (transactional, version-checked). `server/routes/api.ts`: thin routes.
 - `server/db/migrations/`: numbered SQL. `server/db/seed.ts`: deterministic seed and integrity checks.

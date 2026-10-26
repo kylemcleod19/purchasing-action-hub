@@ -2,22 +2,40 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiRequestError } from '../api';
 import { useDemo } from '../demo';
+import { arrivalDate, itemRank, prioritizeArrivals } from '../../../shared/arrivals';
 import { formatDate } from '../../../shared/dates';
-import { DELIVERY_STATE_LABELS, EVENT_LABELS, PROCESSING_TIME_NOTE, sourceLabel } from '../../../shared/labels';
-import { DELIVERY_STATES, type DeliveryRow, type DeliveryState, type FollowUp, type HistoryEntry, type PurchaseOrderDetail } from '../../../shared/types';
-import { ArrivalForm } from '../components/ArrivalForm';
+import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS, EVENT_LABELS, REASON_LABELS, sourceLabel } from '../../../shared/labels';
+import {
+  DELIVERY_STATES,
+  type DeliveryRow,
+  type DeliveryState,
+  type FollowUp,
+  type HistoryEntry,
+  type IssueReason,
+  type PoLineDetail,
+  type PurchaseOrderDetail,
+} from '../../../shared/types';
+import { ArrivalForm, ResolveForm, SplitForm, type SaveResult } from '../components/DeliveryForms';
 import { CompleteFollowUpForm, FollowUpForm } from '../components/FollowUpForm';
-import { ArrivalText, Flash, LastUpdate, ReasonBadge, StateLabel } from '../components/Labels';
+import { Icon } from '../components/Icons';
+import { ArrivalDate, DateText, Flash, IssueStatus, LastUpdate, ProductionStartDate, StateLabel } from '../components/Labels';
 import { Modal } from '../components/Modal';
-import { SplitForm } from '../components/SplitForm';
-import { deliveryLabel } from './IncomingPage';
+import { deliveryLabel, RowActions } from './IncomingPage';
+
+type IssueFilter = 'all' | 'open' | 'resolved';
+const ISSUE_FILTERS: { key: IssueFilter; label: string }[] = [
+  { key: 'all', label: 'All issues' },
+  { key: 'open', label: 'Needs action' },
+  { key: 'resolved', label: 'Resolved issues' },
+];
 
 type ModalState =
-  | { kind: 'arrival' | 'split'; delivery: DeliveryRow }
+  | { kind: 'arrival' | 'split' | 'resolve'; delivery: DeliveryRow }
   | { kind: 'addFollowUp'; deliveryId: number | null }
   | { kind: 'editFollowUp' | 'completeFollowUp'; followUp: FollowUp };
 
 const ITEM_COLUMNS = 11;
+const MAX_ARRIVALS = 2;
 
 export function PurchaseOrderPage() {
   const { id } = useParams();
@@ -26,24 +44,31 @@ export function PurchaseOrderPage() {
   const tab = searchParams.get('tab') === 'follow-ups' ? 'follow-ups' : 'deliveries';
   const stateParam = searchParams.get('state');
   const stateFilter = DELIVERY_STATES.includes(stateParam as DeliveryState) ? (stateParam as DeliveryState) : null;
+  const issueParam = searchParams.get('issues');
+  const issueFilter: IssueFilter = issueParam === 'open' || issueParam === 'resolved' ? issueParam : 'all';
   const [data, setData] = useState<PurchaseOrderDetail | null>(null);
   const [loadError, setLoadError] = useState<{ status: number; message: string } | null>(null);
   const [expanded, setExpanded] = useState<Set<number> | null>(null);
   const [modal, setModal] = useState<ModalState | null>(null);
   const [flash, setFlash] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [focusLine, setFocusLine] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
       const detail = await api<PurchaseOrderDetail>(`/purchase-orders/${id}`);
       setData(detail);
-      // Small POs open with every item expanded; larger ones start collapsed. Later saves keep the user's choice.
-      setExpanded((prev) => prev ?? new Set(detail.lines.length <= 2 ? detail.lines.map((l) => l.id) : []));
+      setExpanded((prev) => {
+        if (prev) return prev;
+        // Small POs open fully; otherwise only the item linked from Incoming items. Saves keep the user's choice.
+        const item = Number(new URLSearchParams(window.location.search).get('item'));
+        return new Set(detail.lines.length <= 2 ? detail.lines.map((l) => l.id) : item ? [item] : []);
+      });
       setLoadError(null);
+      return detail;
     } catch (err) {
       setData(null);
-      setLoadError(
-        err instanceof ApiRequestError ? { status: err.status, message: err.message } : { status: 0, message: 'Could not load the PO.' },
-      );
+      setLoadError(err instanceof ApiRequestError ? { status: err.status, message: err.message } : { status: 0, message: 'Could not load the PO.' });
+      return null;
     }
   }, [id]);
 
@@ -55,10 +80,27 @@ export function PurchaseOrderPage() {
     load();
   }, [load, resetCount]);
 
-  function saved(text: string) {
+  // Return focus to the item's expand button after a save so keyboard users keep their place.
+  useEffect(() => {
+    if (focusLine === null || !data) return;
+    document.querySelector<HTMLButtonElement>(`[data-item-expander="${focusLine}"]`)?.focus();
+    setFocusLine(null);
+  }, [data, focusLine]);
+
+  const matches = useCallback(
+    (d: DeliveryRow) =>
+      (!stateFilter || d.state === stateFilter) &&
+      (issueFilter === 'all' || (issueFilter === 'open' ? d.issue !== null : d.issue === null && d.lastResolution !== null)),
+    [stateFilter, issueFilter],
+  );
+
+  async function saved(result: SaveResult, lineId: number | null) {
     setModal(null);
-    setFlash({ kind: 'success', text });
-    load();
+    const next = await load();
+    const line = next?.lines.find((l) => l.id === lineId);
+    const hidden = lineId !== null && line && !line.deliveries.some(matches);
+    setFlash({ kind: 'success', text: hidden ? `${result.message} The item no longer matches the current filters.` : result.message });
+    if (lineId !== null && !hidden) setFocusLine(lineId);
   }
 
   const setParam = (key: string, value: string | null) =>
@@ -72,11 +114,11 @@ export function PurchaseOrderPage() {
       { replace: true },
     );
 
-  const toggleItem = (lineId: number) =>
+  const toggleItem = (lineId: number, open?: boolean) =>
     setExpanded((prev) => {
       const next = new Set(prev ?? []);
-      if (next.has(lineId)) next.delete(lineId);
-      else next.add(lineId);
+      if (open ?? !next.has(lineId)) next.add(lineId);
+      else next.delete(lineId);
       return next;
     });
 
@@ -101,9 +143,12 @@ export function PurchaseOrderPage() {
   const allDeliveries = lines.flatMap((l) => l.deliveries);
   const openFollowUps = followUps.filter((f) => f.state === 'open');
   const dueFollowUps = openFollowUps.filter((f) => f.isDue);
+  const lineOf = (deliveryId: number) => lines.find((l) => l.deliveries.some((d) => d.deliveryId === deliveryId))?.id ?? null;
   const visibleLines = lines
-    .map((line) => ({ line, deliveries: line.deliveries.filter((d) => !stateFilter || d.state === stateFilter) }))
-    .filter(({ deliveries }) => !stateFilter || deliveries.length > 0);
+    .map((line) => ({ line, matching: line.deliveries.filter(matches) }))
+    .filter(({ matching }) => matching.length > 0)
+    .sort((a, b) => itemRank(a.line.deliveries) - itemRank(b.line.deliveries) || a.line.lineNo - b.line.lineNo);
+  const openAction = (kind: 'arrival' | 'split' | 'resolve', delivery: DeliveryRow) => setModal({ kind, delivery });
 
   return (
     <section>
@@ -132,7 +177,7 @@ export function PurchaseOrderPage() {
             </div>
           </dl>
         </div>
-        <dl className="work-order-callout" aria-label="Work order">
+        <dl className="work-order-callout">
           <div>
             <dt>Work order</dt>
             <dd>
@@ -148,13 +193,7 @@ export function PurchaseOrderPage() {
       <Flash message={flash} onDismiss={() => setFlash(null)} />
 
       <div className="tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'deliveries'}
-          className={tab === 'deliveries' ? 'active' : ''}
-          onClick={() => setParam('tab', null)}
-        >
+        <button type="button" role="tab" aria-selected={tab === 'deliveries'} className={tab === 'deliveries' ? 'active' : ''} onClick={() => setParam('tab', null)}>
           Deliveries
         </button>
         <button
@@ -182,91 +221,109 @@ export function PurchaseOrderPage() {
                 </button>
               ))}
             </div>
-            <span className="hint">
-              Follow-ups: {openFollowUps.length} open
-              {dueFollowUps.length > 0 && <span className="due-text"> · {dueFollowUps.length} due</span>}
-            </span>
+            <div className="segmented" role="group" aria-label="Issues">
+              {ISSUE_FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  className={issueFilter === f.key ? 'active' : ''}
+                  aria-pressed={issueFilter === f.key}
+                  onClick={() => setParam('issues', f.key === 'all' ? null : f.key)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            {dueFollowUps.length > 0 && (
+              <button type="button" className="link-button due-text" onClick={() => setParam('tab', 'follow-ups')}>
+                {dueFollowUps.length} reminder{dueFollowUps.length === 1 ? '' : 's'} due
+              </button>
+            )}
           </div>
 
           {visibleLines.length === 0 ? (
-            <p className="empty">No {stateFilter ? DELIVERY_STATE_LABELS[stateFilter].toLowerCase() : ''} deliveries on this PO.</p>
+            <p className="empty">No deliveries on this PO match these filters.</p>
           ) : (
-            <div className="table-scroll">
-              <table className="data-table items-table">
-                <thead>
-                  <tr>
-                    <th colSpan={5}></th>
-                    <th colSpan={6} scope="colgroup" className="group-header">
-                      Item totals (all states)
-                    </th>
-                  </tr>
-                  <tr>
-                    <th>
-                      <span className="visually-hidden">Expand</span>
-                    </th>
-                    <th className="num">Line</th>
-                    <th>Part number</th>
-                    <th>Description</th>
-                    <th>Unit</th>
-                    <th className="num">Ordered</th>
-                    <th className="num">Planned</th>
-                    <th className="num">In transit</th>
-                    <th className="num">Received</th>
-                    <th className="num">Late</th>
-                    <th className="num">Date unknown</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleLines.map(({ line, deliveries }) => {
-                    const open = expanded?.has(line.id) ?? false;
-                    return (
-                      <Fragment key={line.id}>
-                        <tr className={open ? 'expanded' : undefined}>
-                          <td>
-                            <button
-                              type="button"
-                              className="expander"
-                              aria-expanded={open}
-                              aria-controls={`item-${line.id}-deliveries`}
-                              aria-label={`Deliveries for line ${line.lineNo} ${line.partNumber}`}
-                              onClick={() => toggleItem(line.id)}
-                            >
-                              {open ? '▾' : '▸'}
-                            </button>
-                          </td>
-                          <td className="num">{line.lineNo}</td>
-                          <td className="nowrap">{line.partNumber}</td>
-                          <td>{line.description}</td>
-                          <td>{line.unit}</td>
-                          <td className="num">{line.orderedQty}</td>
-                          <td className="num">{line.plannedQty}</td>
-                          <td className="num">{line.inTransitQty}</td>
-                          <td className="num">{line.receivedQty}</td>
-                          <td className={`num${line.lateQty > 0 ? ' late-text' : ''}`}>{line.lateQty}</td>
-                          <td className={`num${line.unknownQty > 0 ? ' status-unknown' : ''}`}>{line.unknownQty}</td>
-                        </tr>
-                        {open && (
-                          <tr className="detail-row" id={`item-${line.id}-deliveries`}>
-                            <td colSpan={ITEM_COLUMNS}>
-                              <DeliveriesTable
-                                deliveries={deliveries}
-                                followUps={openFollowUps}
-                                onArrival={(d) => setModal({ kind: 'arrival', delivery: d })}
-                                onSplit={(d) => setModal({ kind: 'split', delivery: d })}
-                                onFollowUp={(d) => setModal({ kind: 'addFollowUp', deliveryId: d.deliveryId })}
-                              />
+            <>
+              <p className="table-caption">Quantities: all deliveries.</p>
+              <div className="table-scroll">
+                <table className="data-table items-table">
+                  <thead>
+                    <tr>
+                      <th>
+                        <span className="visually-hidden">Expand</span>
+                      </th>
+                      <th className="num">Line</th>
+                      <th>Part number</th>
+                      <th>Description</th>
+                      <th>Unit</th>
+                      <th className="num" title="Full item quantity.">
+                        Ordered
+                      </th>
+                      <th className="num" title="Cumulative dispatched quantity, including received units. In transit = Shipped − Received.">
+                        Shipped
+                      </th>
+                      <th className="num" title="Cumulative received quantity. Not shipped = Ordered − Shipped.">
+                        Received
+                      </th>
+                      <th>Required dock</th>
+                      <th>Arrivals</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleLines.map(({ line, matching }) => {
+                      const open = expanded?.has(line.id) ?? false;
+                      return (
+                        <Fragment key={line.id}>
+                          <tr className={`${open ? 'expanded' : ''}${line.openIssueCount > 0 ? ' has-issue' : ''}`} data-line-id={line.id}>
+                            <td>
+                              <button
+                                type="button"
+                                className="expander"
+                                data-item-expander={line.id}
+                                aria-expanded={open}
+                                aria-controls={`item-${line.id}-deliveries`}
+                                aria-label={`Deliveries for line ${line.lineNo} ${line.partNumber}`}
+                                onClick={() => toggleItem(line.id)}
+                              >
+                                {open ? '▾' : '▸'}
+                              </button>
+                            </td>
+                            <td className="num">{line.lineNo}</td>
+                            <td className="nowrap">{line.partNumber}</td>
+                            <td>{line.description}</td>
+                            <td>{line.unit}</td>
+                            <td className="num">{line.orderedQty}</td>
+                            <td className="num">{line.shippedQty}</td>
+                            <td className="num">{line.receivedQty}</td>
+                            <td>
+                              <DateText date={line.requiredDock} />
+                            </td>
+                            <td>
+                              <ArrivalsStack line={line} matching={matching} expanded={open} onMore={() => toggleItem(line.id, true)} />
+                            </td>
+                            <td>
+                              <ItemAction line={line} onAction={openAction} />
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          {open && (
+                            <tr className="detail-row" id={`item-${line.id}-deliveries`}>
+                              <td colSpan={ITEM_COLUMNS}>
+                                <DeliveriesTable deliveries={prioritizeArrivals(matching)} onAction={openAction} />
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
-          <p className="hint footnote">{PROCESSING_TIME_NOTE}</p>
-          <HistoryList history={history} />
+          <p className="hint footnote">{DATE_RULES_NOTE}</p>
+          <HistoryTable history={history} />
         </>
       )}
 
@@ -281,20 +338,21 @@ export function PurchaseOrderPage() {
 
       {modal?.kind === 'arrival' && (
         <Modal title="Update expected arrival" onClose={() => setModal(null)}>
-          <ArrivalForm delivery={modal.delivery} onCancel={() => setModal(null)} onSaved={() => saved('Expected arrival saved.')} />
+          <ArrivalForm delivery={modal.delivery} onCancel={() => setModal(null)} onSaved={(r) => saved(r, lineOf(modal.delivery.deliveryId))} />
         </Modal>
       )}
       {modal?.kind === 'split' && (
-        <Modal title="Split planned delivery" onClose={() => setModal(null)} wide>
-          <SplitForm
-            delivery={modal.delivery}
-            onCancel={() => setModal(null)}
-            onSaved={() => saved('Split saved. The original delivery is kept in history.')}
-          />
+        <Modal title="Split delivery" onClose={() => setModal(null)} wide>
+          <SplitForm delivery={modal.delivery} onCancel={() => setModal(null)} onSaved={(r) => saved(r, lineOf(modal.delivery.deliveryId))} />
+        </Modal>
+      )}
+      {modal?.kind === 'resolve' && (
+        <Modal title="Resolve issue" onClose={() => setModal(null)}>
+          <ResolveForm delivery={modal.delivery} onCancel={() => setModal(null)} onSaved={(r) => saved(r, lineOf(modal.delivery.deliveryId))} />
         </Modal>
       )}
       {(modal?.kind === 'addFollowUp' || modal?.kind === 'editFollowUp') && (
-        <Modal title={modal.kind === 'addFollowUp' ? 'Add follow-up' : 'Edit follow-up'} onClose={() => setModal(null)}>
+        <Modal title={modal.kind === 'addFollowUp' ? 'Add reminder' : 'Edit reminder'} onClose={() => setModal(null)}>
           <FollowUpForm
             poId={po.id}
             poNumber={po.number}
@@ -303,93 +361,114 @@ export function PurchaseOrderPage() {
             defaultDueDate={demoDate}
             existing={modal.kind === 'editFollowUp' ? modal.followUp : undefined}
             onCancel={() => setModal(null)}
-            onSaved={() => saved(modal.kind === 'addFollowUp' ? 'Follow-up added.' : 'Follow-up saved.')}
+            onSaved={() => saved({ message: modal.kind === 'addFollowUp' ? 'Reminder added.' : 'Reminder saved.' }, null)}
           />
         </Modal>
       )}
       {modal?.kind === 'completeFollowUp' && (
-        <Modal title="Complete follow-up" onClose={() => setModal(null)}>
-          <CompleteFollowUpForm followUp={modal.followUp} onCancel={() => setModal(null)} onSaved={() => saved('Follow-up completed.')} />
+        <Modal title="Complete reminder" onClose={() => setModal(null)}>
+          <CompleteFollowUpForm followUp={modal.followUp} onCancel={() => setModal(null)} onSaved={() => saved({ message: 'Reminder completed.' }, null)} />
         </Modal>
       )}
     </section>
   );
 }
 
-function DeliveriesTable({
-  deliveries,
-  followUps,
-  onArrival,
-  onSplit,
-  onFollowUp,
-}: {
-  deliveries: DeliveryRow[];
-  followUps: FollowUp[];
-  onArrival: (d: DeliveryRow) => void;
-  onSplit: (d: DeliveryRow) => void;
-  onFollowUp: (d: DeliveryRow) => void;
-}) {
+/**
+ * Up to two arrival dates, prioritized (open issues, other risk, outstanding, received). Quantities
+ * appear only when the item has more than one active delivery; filters never change that rule.
+ */
+function ArrivalsStack({ line, matching, expanded, onMore }: { line: PoLineDetail; matching: DeliveryRow[]; expanded: boolean; onMore: () => void }) {
+  const ordered = prioritizeArrivals(matching);
+  const shown = ordered.slice(0, MAX_ARRIVALS);
+  const hidden = ordered.length - shown.length;
+  const multiple = line.deliveries.length > 1;
+  return (
+    <div className="arrival-stack">
+      {shown.map((d) => (
+        <div key={d.deliveryId} data-arrival-for={d.deliveryId} data-arrival-date={arrivalDate(d) ?? ''}>
+          <ArrivalDate row={d} quantity={multiple ? d.quantity : undefined} />
+        </div>
+      ))}
+      {hidden > 0 && (
+        <button type="button" className="more-button" aria-expanded={expanded} aria-label={`Show ${hidden} more deliveries`} onClick={onMore}>
+          +{hidden}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Open-issue count (covers deliveries hidden from the stack); a single delivery's actions inline. */
+function ItemAction({ line, onAction }: { line: PoLineDetail; onAction: (kind: 'arrival' | 'split' | 'resolve', d: DeliveryRow) => void }) {
+  const single = line.deliveries.length === 1 ? line.deliveries[0] : null;
+  return (
+    <div className="item-action">
+      {line.openIssueCount > 0 && (
+        <span className="issue-count" title={`${line.openIssueCount} open issue${line.openIssueCount === 1 ? '' : 's'}`}>
+          <Icon name="flag" label={`${line.openIssueCount} open issue${line.openIssueCount === 1 ? '' : 's'}`} /> {line.openIssueCount}
+        </span>
+      )}
+      {single && single.state !== 'received' && (
+        <>
+          {single.issue && (
+            <button type="button" className="primary small" onClick={() => onAction('resolve', single)}>
+              Resolve
+            </button>
+          )}
+          <button type="button" className="small" onClick={() => onAction('arrival', single)}>
+            Update arrival
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DeliveriesTable({ deliveries, onAction }: { deliveries: DeliveryRow[]; onAction: (kind: 'arrival' | 'split' | 'resolve', d: DeliveryRow) => void }) {
   return (
     <table className="compact deliveries-table">
       <thead>
         <tr>
           <th>Delivery</th>
-          <th className="num">Qty</th>
-          <th>Delivery state</th>
-          <th className="date-col">Expected arrival</th>
-          <th className="date-col">Production start</th>
-          <th>Attention</th>
+          <th className="num">Quantity</th>
+          <th>State</th>
+          <th>Required dock</th>
+          <th>Expected / received arrival</th>
+          <th>Production start</th>
           <th>Last update</th>
-          <th>Follow-ups</th>
+          <th>Issue</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        {deliveries.map((d) => {
-          const own = followUps.filter((f) => f.deliveryId === d.deliveryId);
-          const due = own.some((f) => f.isDue);
-          return (
-            <tr key={d.deliveryId} data-delivery-id={d.deliveryId}>
-              <td>#{d.deliveryId}</td>
-              <td className="num">{d.quantity}</td>
-              <td>
-                <StateLabel state={d.state} />
-              </td>
-              <td className="date-col">
-                <ArrivalText row={d} />
-              </td>
-              <td className="date-col nowrap">{formatDate(d.productionStart)}</td>
-              <td>
-                {d.reasons.map((r) => (
-                  <ReasonBadge key={r} reason={r} />
-                ))}
-              </td>
-              <td>
-                <LastUpdate updatedAt={d.updatedAt} source={d.source} />
-              </td>
-              <td className="nowrap">{own.length > 0 ? <span className={due ? 'due-text' : undefined}>{own.length} open{due ? ' · due' : ''}</span> : '—'}</td>
-              <td className="actions">
-                {d.state === 'received' ? (
-                  <span className="hint">Read-only</span>
-                ) : (
-                  <>
-                    <button type="button" onClick={() => onArrival(d)}>
-                      Update arrival
-                    </button>
-                    {d.state === 'planned' && (
-                      <button type="button" onClick={() => onSplit(d)}>
-                        Split
-                      </button>
-                    )}
-                  </>
-                )}
-                <button type="button" onClick={() => onFollowUp(d)}>
-                  Add follow-up
-                </button>
-              </td>
-            </tr>
-          );
-        })}
+        {deliveries.map((d) => (
+          <tr key={d.deliveryId} data-delivery-id={d.deliveryId} className={d.issue ? 'has-issue' : undefined}>
+            <td>#{d.deliveryId}</td>
+            <td className="num">{d.quantity}</td>
+            <td className="nowrap">
+              <StateLabel state={d.state} />
+            </td>
+            <td>
+              <DateText date={d.requiredDock} />
+            </td>
+            <td>
+              <ArrivalDate row={d} />
+            </td>
+            <td>
+              <ProductionStartDate row={d} />
+            </td>
+            <td>
+              <LastUpdate at={d.arrivalUpdatedAt} source={d.source} />
+            </td>
+            <td className="nowrap">
+              <IssueStatus row={d} />
+            </td>
+            <td>
+              <RowActions row={d} onAction={(kind) => onAction(kind, d)} />
+            </td>
+          </tr>
+        ))}
       </tbody>
     </table>
   );
@@ -410,19 +489,19 @@ function FollowUpsTab({
     <div>
       <div className="toolbar">
         <button type="button" className="primary" onClick={onAdd}>
-          Add follow-up
+          Add reminder
         </button>
-        <span className="hint">Follow-ups are reminders for you. Nothing is sent to the supplier.</span>
+        <span className="hint">Optional reminders. They do not open or resolve delivery issues, and nothing is sent to the supplier.</span>
       </div>
       {followUps.length === 0 ? (
-        <p className="empty">No follow-ups on this PO.</p>
+        <p className="empty">No reminders on this PO.</p>
       ) : (
         <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
                 <th>Due</th>
-                <th>Follow-up</th>
+                <th>Reminder</th>
                 <th>Delivery</th>
                 <th>State</th>
                 <th>Completion note</th>
@@ -434,23 +513,23 @@ function FollowUpsTab({
                 <tr key={f.id} className={f.state === 'completed' ? 'muted' : undefined}>
                   <td className="nowrap">
                     {formatDate(f.dueDate)}
-                    {f.isDue && <span className="badge reason-follow_up_due">Due</span>}
+                    {f.isDue && <span className="badge due-badge">Due</span>}
                   </td>
                   <td>{f.note}</td>
                   <td className="nowrap">
                     {f.deliveryId !== null ? `#${f.deliveryId}` : 'Whole PO'}
-                    {f.originalDeliveryId !== null && <div className="hint">Originally #{f.originalDeliveryId} (split)</div>}
+                    {f.originalDeliveryId !== null && <div className="hint">From #{f.originalDeliveryId} (split)</div>}
                   </td>
                   <td className="nowrap">{f.state === 'open' ? 'Open' : `Completed ${new Date(f.completedAt!).toLocaleDateString()}`}</td>
                   <td>{f.completionNote ?? '—'}</td>
                   <td className="actions">
                     {f.state === 'open' && (
                       <>
-                        <button type="button" onClick={() => onEdit(f)}>
+                        <button type="button" className="small" onClick={() => onEdit(f)}>
                           Edit
                         </button>
-                        <button type="button" onClick={() => onComplete(f)}>
-                          Complete
+                        <button type="button" className="small" onClick={() => onComplete(f)}>
+                          Complete reminder
                         </button>
                       </>
                     )}
@@ -465,20 +544,28 @@ function FollowUpsTab({
   );
 }
 
-const dateText = (value: unknown) => (typeof value === 'string' ? formatDate(value) : 'Date unknown');
+const dateText = (value: unknown) => (typeof value === 'string' ? formatDate(value) : 'Unknown');
+const reasonsText = (value: unknown) => (Array.isArray(value) ? value.map((r) => REASON_LABELS[r as IssueReason] ?? r).join(', ') : '');
 
+/** Old → new values for a history row. */
 function describeChange(entry: HistoryEntry): string {
   const before = entry.before ?? {};
   const after = entry.after ?? {};
   switch (entry.eventType) {
     case 'arrival_updated':
-      return `Expected arrival ${dateText(before.expectedArrival)} → ${dateText(after.expectedArrival)}`;
+      return `${dateText(before.expectedArrival)} → ${dateText(after.expectedArrival)}`;
     case 'delivery_split': {
       const parts = (after.deliveries as { id: number; quantity: number; expectedArrival: string | null }[]) ?? [];
-      return `${before.quantity} (${dateText(before.expectedArrival)}) → ${parts
-        .map((p) => `#${p.id}: ${p.quantity} (${dateText(p.expectedArrival)})`)
-        .join(' + ')}`;
+      return `${before.quantity} (${dateText(before.expectedArrival)}) → ${parts.map((p) => `#${p.id} ${p.quantity} (${dateText(p.expectedArrival)})`).join(', ')}`;
     }
+    case 'issue_opened':
+      return `${reasonsText(after.reasons)}${before.previousIssue ? ` (reopens #${before.previousIssue})` : ''}${before.parentIssue ? ` (from split issue #${before.parentIssue})` : ''}`;
+    case 'issue_updated':
+      return `${reasonsText(before.reasons)} → ${reasonsText(after.reasons)}`;
+    case 'issue_resolved':
+      return `${String(after.outcome)} · arrival ${dateText(after.expectedArrival)}`;
+    case 'issue_superseded':
+      return `Issue #${before.issue} → split deliveries`;
     case 'follow_up_added':
       return `Due ${dateText(after.dueDate)}`;
     case 'follow_up_edited':
@@ -486,13 +573,13 @@ function describeChange(entry: HistoryEntry): string {
     case 'follow_up_completed':
       return 'Open → Completed';
     case 'follow_up_moved':
-      return `Delivery #${before.delivery} → Whole PO`;
+      return `#${before.delivery} → Whole PO`;
     default:
       return '';
   }
 }
 
-function HistoryList({ history }: { history: HistoryEntry[] }) {
+function HistoryTable({ history }: { history: HistoryEntry[] }) {
   return (
     <div className="history">
       <h2>Change history</h2>
@@ -506,7 +593,8 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
                 <th>When (your time)</th>
                 <th>Event</th>
                 <th>Delivery</th>
-                <th>Change</th>
+                <th>Old → new</th>
+                <th title="The PO buyer is the demo actor; there is no login.">Actor</th>
                 <th>Source</th>
                 <th>Note</th>
               </tr>
@@ -515,9 +603,10 @@ function HistoryList({ history }: { history: HistoryEntry[] }) {
               {history.map((h) => (
                 <tr key={h.id}>
                   <td className="nowrap">{new Date(h.createdAt).toLocaleString()}</td>
-                  <td>{EVENT_LABELS[h.eventType] ?? h.eventType}</td>
+                  <td className="nowrap">{EVENT_LABELS[h.eventType] ?? h.eventType}</td>
                   <td>{h.deliveryId !== null ? `#${h.deliveryId}` : 'PO'}</td>
                   <td>{describeChange(h)}</td>
+                  <td className="nowrap">{h.actor ? `${h.actor} (demo)` : 'System'}</td>
                   <td>{sourceLabel(h.source)}</td>
                   <td>{h.note ?? '—'}</td>
                 </tr>

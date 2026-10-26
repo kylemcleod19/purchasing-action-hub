@@ -9,7 +9,7 @@ export interface DeliveryOption {
   label: string;
 }
 
-/** Add or edit a follow-up. A follow-up records a task only; it never changes delivery dates. */
+/** Add or edit an optional reminder. Reminders never change delivery dates or delivery issues. */
 export function FollowUpForm({
   poId,
   poNumber,
@@ -64,7 +64,7 @@ export function FollowUpForm({
   return (
     <form onSubmit={submit} className="form">
       <p className="hint">
-        Follow-up for {poNumber}. No message is sent to the supplier; this records a task for you.
+        Reminder for {poNumber}. Nothing is sent to the supplier, and reminders do not open or resolve delivery issues.
       </p>
       <FormErrors error={error} fields={fields} />
       <div className="field">
@@ -83,7 +83,7 @@ export function FollowUpForm({
         <input id="fu-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} required />
       </div>
       <div className="field">
-        <label htmlFor="fu-note">What to follow up on</label>
+        <label htmlFor="fu-note">Reminder</label>
         <textarea id="fu-note" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} required />
       </div>
       <div className="form-actions">
@@ -91,7 +91,7 @@ export function FollowUpForm({
           Cancel
         </button>
         <button type="submit" className="primary" disabled={saving}>
-          {saving ? 'Saving…' : existing ? 'Save follow-up' : 'Add follow-up'}
+          {saving ? 'Saving…' : existing ? 'Save reminder' : 'Add reminder'}
         </button>
       </div>
     </form>
@@ -128,7 +128,7 @@ export function CompleteFollowUpForm({ followUp, onSaved, onCancel }: { followUp
       <p>
         <strong>{followUp.note}</strong> (due {formatDate(followUp.dueDate)})
       </p>
-      <p className="hint">Completing a follow-up does not change expected arrivals or clear a delivery’s date risk.</p>
+      <p className="hint">Completing a reminder does not change arrival dates, Last update, or delivery issues.</p>
       <FormErrors error={error} fields={fields} />
       <div className="field">
         <label htmlFor="fu-completion">Completion note (optional)</label>
@@ -145,7 +145,7 @@ export function CompleteFollowUpForm({ followUp, onSaved, onCancel }: { followUp
           Cancel
         </button>
         <button type="submit" className="primary" disabled={saving}>
-          {saving ? 'Saving…' : 'Mark completed'}
+          {saving ? 'Saving…' : 'Complete reminder'}
         </button>
       </div>
     </form>

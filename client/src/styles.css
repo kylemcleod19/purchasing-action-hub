@@ -708,3 +708,135 @@ table {
 .compact td.num {
   text-align: right;
 }
+
+.icon {
+  vertical-align: -2px;
+  flex: none;
+}
+
+.icon.source {
+  color: var(--muted);
+}
+
+.icon.ok {
+  color: var(--ok);
+}
+
+.icon.unknown {
+  color: #5b3ea6;
+}
+
+.icon.risk,
+.risk-text {
+  color: var(--late);
+}
+
+.icon.conflict,
+.conflict-text {
+  color: #8a2c0d;
+  font-weight: 600;
+}
+
+.date-cell {
+  white-space: nowrap;
+}
+
+.issue-open {
+  color: var(--warn);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.issue-resolved {
+  color: var(--muted);
+}
+
+.muted-text {
+  color: var(--muted);
+}
+
+tr.has-issue > td:first-child {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+.row-actions,
+.item-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.item-action {
+  flex-wrap: nowrap;
+}
+
+button.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.issue-count {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  color: var(--warn);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.arrival-stack {
+  display: grid;
+  gap: 2px;
+}
+
+.arrival-qty {
+  color: var(--muted);
+}
+
+.more-button {
+  justify-self: start;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.table-caption {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.due-badge {
+  background: var(--warn-soft);
+  color: var(--warn);
+  margin-left: 4px;
+}
+
+.resolution {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.resolution legend {
+  font-weight: 600;
+  font-size: 13px;
+  padding: 0 4px;
+}
+
+.field-warning {
+  color: var(--late);
+  font-size: 12px;
+}
+
+.context-table th[scope='row'] {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.seed-notice {
+  color: var(--warn);
+  font-weight: 600;
+}

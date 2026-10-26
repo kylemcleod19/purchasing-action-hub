@@ -31,7 +31,7 @@ The assignment includes supplier tracking, capacity, arrival coordination, logis
 2. Purchase-order detail with delivery schedule, production impact, and supplier follow-ups.
 3. Manual expected-arrival updates with source, timestamp, and an optional note.
 4. Split an unshipped delivery commitment into quantities with separate expected arrivals.
-5. Record and complete supplier follow-up tasks.
+5. Resolve delivery issues inline, independently of physical delivery risk; retain optional follow-up reminders.
 6. Persist edits, preserve a simple change history, and reset synthetic demo data.
 
 ### Exclude
@@ -39,100 +39,103 @@ PO creation/approval/transmission; procurement sourcing; replenishment; purchasi
 
 Do not build a separate work-order, supplier, task-management, or inventory module. Show relevant context within the two primary views.
 
-## 5. Vocabulary
+## 5. Vocabulary and date rules
 | Label | Meaning |
 |---|---|
-| Expected arrival | Current expected arrival at the destination warehouse, not ship date |
-| Delivery schedule | Quantity/date commitments, including those not yet shipped |
-| Planned delivery | Unshipped quantity with a known or unknown expected arrival |
-| In transit | Shipment reported as dispatched; not proof of receipt |
-| Received | Read-only upstream fact in seeded data |
-| Production start | Read-only start date of an affected work order |
-| Late | Expected arrival later than the linked production start |
-| Date unknown | Outstanding quantity has no expected arrival |
-| Arrival overdue | Expected arrival has passed and receipt is not recorded |
-| Follow-up due | Open follow-up dated on or before the demo's current date |
+| Required dock date | Read-only date the PO item is required at its destination; independent of the latest estimate |
+| Expected arrival | Latest estimated arrival at the destination, never ship date |
+| Not shipped | Delivery commitment that has not been dispatched; not an actual shipment |
+| In transit | Dispatched quantity not yet received |
+| Received | Read-only upstream fact; display actual received date |
+| Production start | Read-only start of the PO's single work order |
+| Late | Outstanding expected arrival is after required dock date |
+| Production conflict | Outstanding expected arrival is after production start |
+| Overdue | Expected arrival is before demo date, with no recorded receipt |
+| Date unknown | Outstanding delivery has no expected arrival |
+| Needs action | Delivery has an open issue requiring buyer disposition |
+| Resolved | Buyer disposed of the issue; does not mean the material is on time |
 
-Use these labels consistently. Do not call planned deliveries actual shipments. Avoid “ready,” “covered,” or “resolved” when only an arrival estimate has changed.
+Required dock date is an explicit prototype default added to distinguish supplier lateness from production impact. Seed it on each PO item, on or before production start. Never replace it when updating an expected arrival. These business dates are not PO creation dates. No dock-date or production-schedule editing workflow is included.
 
 ## 6. Screens and behavior
-### A. Incoming items — default landing screen
-One row per delivery-schedule line. A PO item split into two deliveries produces two rows. Show the single work order inherited from the PO on each row.
+### A. Incoming items
+One row per active delivery commitment, including separate rows for splits. Inherit work order and production start from the PO.
 
-Columns: PO, supplier, part number/description, destination, work order, delivery quantity, delivery state, Expected arrival, Production start, attention reason, Last update (date and source icon), next follow-up. Place Expected arrival and Production start next to each other so the comparison is immediately visible. Do not use earliest-start summaries or work-order counts.
+Use compact columns: PO, supplier, part, quantity, state, Required dock, Expected arrival, Production start, Last update, issue indicator, actions. Destination and descriptive context can appear in expansion. Dates must be visible, not buried in tooltips. Use numeric quantities, short state labels, and icons; never compose sentences explaining quantities or lateness in cells.
 
-Default to outstanding deliveries needing attention. Provide All outstanding and Received filters. Search PO/part/supplier; filter supplier and attention reason. Ordinary sortable tables are sufficient.
+Default filter: Needs action (open delivery issues). Also provide All outstanding, Late, Date unknown, and Received. Late includes accepted/resolved delays. Search PO/part/supplier and filter supplier and delivery state. Sort open issues by production conflict first, then production start, required dock, and stable ID. This is a demo ordering rule, not optimized priority.
 
-Primary actions:
-- Update arrival: compact form available from the row.
-- Open PO: navigate to the same underlying record in detail.
-- Add follow-up: open a small form prelinked to the PO and optionally delivery.
-
-Show the strongest attention reason, with other reasons in expandable details:
-1. Date conflict with production start.
-2. Arrival overdue.
-3. Date unknown.
-4. Follow-up due.
-5. No identified date issue.
-
-Sort within attention groups by the PO’s production start, unknown starts last. Document this as a simple demo ordering rule, not optimized priority. Supplier criticality and program priorities are not modeled.
+Actions open the same update/split/resolution forms used in PO detail. Opening the PO expands the relevant item. No trip to Follow-ups is required to resolve an issue.
 
 ### B. Purchase-order detail
-Header: PO number, supplier, buyer, destination, order status, Work order, and a prominent labeled Production start date. Keep Work order and Production start visible above the tables on both tabs. Two tabs: Deliveries and Follow-ups.
+Header: PO number, supplier, buyer, destination, order status, work order, and prominent Production start. Keep Deliveries and Follow-ups tabs; follow-ups are optional reminders, not the issue-resolution workflow.
 
-Deliveries:
-- Use one semantic PO-item summary table with shared column headers: expand control, line number, part number, description, unit, ordered quantity, planned quantity, in-transit quantity, received quantity. Do not render each PO item as a separate repeated card/div section such as `.po-line`.
-- Display quantity breakdowns as numeric table columns, never repeated prose or equations such as `.qty-breakdown` ("Ordered 70 = Planned 0 + In transit 31 + Received 39"). Totals exclude superseded deliveries.
-- Expand a PO-item row accordion-style to reveal its delivery table within a full-width detail row. Delivery columns: delivery ID, quantity, delivery state, Expected arrival, Production start, attention, Last update, follow-ups, actions. Production start is inherited from the PO and is shown adjacent to Expected arrival.
-- Remove work-order-count columns and nested work-order expansions: each PO has only one work order. Retain PO-item accordion expansions for the delivery tables. Use additional row expansions only for useful repeated detail, such as update history.
-- Allow multiple rows to remain expanded. Expansion buttons must support keyboard activation and expose aria-expanded. Use valid table structure with nested tables inside a detail row's spanning cell.
-- Provide delivery-state filters above the PO-item table: All (default), Planned delivery, In transit, Received. A selected state shows only PO items containing matching active deliveries and only matching deliveries within their expansions. Keep the PO-item summary quantities as full, unfiltered totals; label them "Item totals (all states)" so filtered rows do not imply changed totals. Show an empty state if nothing matches. Preserve the selected filter after saves.
-- Actions: update arrival; split planned delivery.
-- Show a compact chronological change history with old/new values, source, timestamp, and note.
+One semantic item table, with columns:
+**Expand | Line | Part number | Description | Unit | Ordered | Shipped | Received | Required dock | Arrivals | Action**.
 
-Follow-ups:
-- PO-level tasks with optional delivery reference, due date, note, open/completed state, and completion note.
-- Add, edit, or complete a task. Do not send notifications.
-- Completing a task never changes arrival information or clears a delivery risk.
-- Show follow-up count/due indicator on Deliveries; no separate task application.
+- Ordered is the full item quantity. Shipped is cumulative dispatched quantity, including received units. Received is cumulative received quantity. Thus `Received <= Shipped <= Ordered`; never sum these three columns. In transit is Shipped minus Received. Not shipped is Ordered minus Shipped. Define this in header tooltips; do not add repeated explanations per row.
+- Remove Planned, Late quantity, Date unknown quantity, and the six-column item-total grouping from the collapsed table.
+- Arrivals contains vertically stacked dates. With one active delivery, show only its date and icon, without quantity. With multiple active deliveries, show date plus quantity in parentheses for each. Use actual received date and a check icon for received deliveries; expected arrival otherwise. Unknown is an em dash with question icon and accessible label.
+- Show at most two arrivals initially, prioritizing open issues, then outstanding late/unknown/overdue deliveries, then other outstanding, then received. Sort within groups by date and ID. A compact `+N` control expands the full delivery table. Never merge different deliveries merely because their dates match. Quantity suppression depends on the full active delivery count, not the selected filter.
+- Warning icons/color beside dates show delivery risk; a separate Action cell shows an open-issue icon and count. Resolving removes the action badge, not the date warning. Use subtle row emphasis for open issues; avoid full-row red on every delayed-but-accepted item. Tooltips explain exact date comparisons and days late; keep prose out of table cells.
+- Default item ordering: open issues first, then unresolved physical date risk, then other items, with line number as tiebreaker. Preserve row focus/expansion during saves; communicate if the current filter removes a resolved item.
+- Accordion expansions contain a semantic delivery table: Delivery | Quantity | State | Required dock | Expected/received arrival | Production start | Last update | Issue | Actions. No repeated card/div sections or prose quantity breakdowns. Use compact labels Open/Resolved/em dash in Issue and accessible risk icons next to dates.
+- Row actions: Update arrival; Split delivery (not shipped only); Resolve issue (open issue only). A single-delivery item may expose Update arrival directly on its collapsed row. Multiple deliveries use expansion to select the target.
+- Filters: All, Not shipped, In transit, Received; additionally All issues / Needs action / Resolved issues. Filters combine. An item is visible if any delivery matches. Expanded deliveries and arrival stacks show matching deliveries; Ordered/Shipped/Received remain full item totals, labeled once above the table as “Quantities: all deliveries.” Preserve filters after saves and show explicit empty states.
+- Allow multiple expanded items. Use keyboard-accessible buttons, aria-expanded, and valid nested tables inside spanning detail cells.
 
-### Last update and source display
-Replace the visible Source column with **Last update** in incoming and PO delivery tables. Show the date of the latest arrival-information update followed by a compact source icon: envelope for Supplier email, phone for Supplier call, package for Carrier update. Use a neutral document icon for Other or the initial PO schedule; never invent an email/call source for seeded data.
+### Follow-ups and history
+Keep existing PO-level reminders with optional delivery reference, due date, note, and completion. Due reminders are visible on the Follow-ups tab and through a compact due count/link; they do not create or reopen delivery issues. Completing a reminder does not resolve an issue; resolving an issue does not complete a reminder. Keep these actions clearly labeled and independent.
 
-Keep source as a field in the update form and underlying data. Each icon needs an accessible label and tooltip naming the source. Show the full timestamp in a tooltip or expanded detail. The date is the information-update date, not expected arrival, ship date, or task-completion date. Adding/completing a follow-up must not refresh it. If no update timestamp exists, show an em dash rather than a fabricated date. Seed realistic initial schedule/update timestamps explicitly.
+Render change history as a compact table with timestamp, event, delivery, old/new values, actor, source, and optional note. Notes may be prose in forms/history detail; the ban on prose applies to operational quantity/status summaries.
 
-### Date presentation
-Show business dates consistently as `Oct 26, 2026` with readable, non-wrapping text. Use explicit labels Expected arrival, Production start, and Last update; never hide the first two dates in tooltips or collapsed rows on Incoming items. In PO detail, Production start remains visible in the header even when item rows are collapsed. Unknown expected arrival displays "Date unknown". Keep warning text such as "3 days after start" supplementary to the actual dates. Do not conflate update timestamps with delivery dates.
+### Last update, dates, and accessibility
+Last update is the latest arrival-information update date plus source icon: envelope (Supplier email), phone (Supplier call), package (Carrier update), document (Other/Initial schedule). Include accessible labels/tooltips and full timestamp in detail. Resolution, follow-up completion, and notes alone must not refresh arrival-information timestamps. Resolution actor/time are separate history fields.
 
-### UI principles
-Use compact, readable semantic tables and labeled forms. All repeated structured records and quantity breakdowns must use tables, with accordion row expansions for detail; do not use repeated div/card layouts or prose lists as substitutes. Layout containers and one-off PO header metadata can remain ordinary HTML containers. Keep supplier, part, quantities, and dates visible where decisions happen. No decorative charts, prose-heavy summary cards, coverage bars, or duplicate status columns.
-Show explicit save success/error, loading and empty states. Disable repeated submits while saving. Forms retain input on validation failure.
-Support desktop/laptop widths and scrolling for tables; no separate mobile design project.
+Use business dates formatted `Oct 26, 2026`, non-wrapping. Date icons distinguish received, late/overdue, and unknown; production conflict is also identified accessibly. Do not rely solely on color. An icon is not a receipt checkbox or receipt-entry action. No receiving workflow is introduced.
 
-## 7. Updates and splits
+Use labeled forms, explicit loading/empty/error/save states, and retain input on failure. Disable duplicate submits. No decorative charts, summary cards, prose-heavy table cells, or separate mobile-design project.
+
+## 7. Updates, splits, and issue resolution
 ### Update arrival
-Accept a date or explicit unknown, source (Supplier email, Supplier call, Carrier update, Other), and an optional short note. Saving must succeed with the note blank; label the field "Note (optional)" and do not require it in client or server validation. Retain old/new arrival values and update timestamp. Apply only to the selected delivery quantity. Update all derived views after save; keep production start unchanged.
+Accept date or explicit unknown, source, and Note (optional). Blank notes must pass client/server validation. Update only the selected delivery, preserve prior values in history, and never modify required dock date or production start. Received records are read-only.
 
-The source labels record manual information provenance. They do not imply integrations or independently verified dates.
+When an issue is open, the same form offers **Save changes** and **Save and resolve issue**. The latter includes a compact outcome selector and optional resolution note. Without an open issue, use Save changes; if the change introduces an exception, show the new issue inline immediately.
 
-### Split planned delivery
-Only planned/unshipped schedule lines can be split. Enter two or more positive integer quantities whose sum equals the original quantity. Each gets an expected arrival or unknown.
+### Split delivery
+Only active not-shipped commitments may split. Enter two or more positive integer quantities summing to the original quantity, each with an expected date or unknown. Children inherit PO item, required dock date, work order, and production start. No allocation grid or work-order reassignment. Preview dates/risks in table columns.
 
-Preserve the original PO item and its single work order. All child deliveries inherit the same work order and production start. The split form contains only delivery quantities and expected arrival dates; remove work-order allocation grids, assignment controls, and unassigned-demand logic. Splitting cannot change the PO’s work order or ordered quantity.
+Use the same Save changes / Save and resolve issue choices when the source has an open issue. The resolution applies only to the selected source commitment and resulting children, never unrelated deliveries. In-transit and received splits are blocked. Preserve the superseded parent and history; cancel/failure leaves everything unchanged.
 
-Preview resulting date conflicts, then save all changes together. Cancel leaves data unchanged. Preserve history for the replaced delivery. Block splits of in-transit or received records; physical shipment correction is out of scope.
+### Separate buyer action from physical delivery risk
+Maintain at most one open issue per active delivery. Multiple reasons can belong to that issue. Open an issue for an outstanding delivery when it first has a late arrival, production conflict, overdue arrival, unknown date, or a later expected arrival than its prior known estimate. A moved-later estimate can require review even while still before required dock date.
+
+Resolution outcomes:
+- **Accepted delay**: buyer accepts the current commitment; no date edit required. Offer “Accept delay and resolve” inline.
+- **Date restored**: updated arrival meets required dock date and is not overdue; validate this outcome.
+- **Split delivery agreed**: the split form saved a negotiated schedule; some children may remain late.
+- **Reviewed / no further action**: explicit disposition for other reviewed cases, including unresolved uncertainty. Do not imply the uncertainty disappeared.
+
+Record actor, timestamp, outcome, optional note, and the exact delivery facts reviewed. Use the PO buyer as a clearly labeled demo actor; no login or identity verification. All notes remain optional.
+
+Save changes alone keeps an existing issue open, even if the new date is on time. Save and resolve applies the edit and disposition atomically. Merely opening a row or editing a note does not resolve an issue. Resolving may leave late/unknown quantities and production conflicts visible. Do not claim whole-work-order readiness.
+
+### Reopening and splits
+A resolved issue must not reopen on refresh, repeated calculations, an identical date update, or a source/note-only change. Open a new issue linked to prior history if the expected arrival moves later again, becomes unknown, or a newly active risk reason appears (for example it becomes overdue). Improving a date while the same already-accepted risk persists does not reopen it. Keep prior resolutions intact.
+
+On a split with Save changes, transfer the open issue context to each outstanding child (even an on-time child) so the buyer can explicitly dispose of the negotiated schedule; supersede the parent's open issue. Without an existing open issue, evaluate children normally. With Save and resolve, record the split outcome on the parent and resolved child dispositions against their saved facts, preventing immediate re-alerting for accepted late children. Subsequent adverse changes can open new child issues. This is issue lineage, not material allocation.
+
+Carrier updates can create issues too; in-transit does not automatically mean no action is possible. Permit arrival updates and acceptance/review, but not splitting dispatched quantities. No carrier integration is required.
 
 ## 8. Calculation and integrity rules
-- Use date-only YYYY-MM-DD values for business dates; UTC timestamps for history.
-- Arrival later than production start = late. Equal date = no calculated date conflict, with the global processing-time limitation visible.
-- Null date = unknown, never on time.
-- Received deliveries have no active inbound date alerts. They do not establish whole-work-order readiness.
-- Evaluate each delivery against its PO’s single work-order production start. No delivery-to-work-order allocation records are needed.
-- For each PO item with multiple deliveries, show late quantity and unknown-date quantity separately. Do not sum quantities of different parts into a misleading work-order quantity. A remaining late quantity still threatens the work order under the all-materials-needed-at-start assumption; an early partial delivery does not establish readiness.
-- PO ordered quantity equals active planned + in-transit + received quantities. Superseded split parents are excluded.
-- Quantities are positive integers in one unit per part; unit conversions and partial receipts are out of scope.
-- Edits and split/history writes are transactional. Reject stale updates rather than overwrite another saved change.
-- No historical event, follow-up completion, or duplicate submit creates additional supply.
+- Date-only YYYY-MM-DD business dates; UTC history timestamps. Use the persisted demo date for overdue checks.
+- Expected arrival > required dock date = late. Expected arrival > production start = production conflict. Equality is not flagged; disclose that receiving/inspection time is not modeled.
+- Null arrival is unknown, never on time. Overdue is expected arrival < demo date and not received.
+- Received deliveries have no active inbound alerts; show actual received date. Preserve historical issues for audit, not in Needs action. Receipt execution remains excluded.
+- Active not-shipped + in-transit + received quantities = ordered quantity. Cumulative shipped = in-transit + received. Exclude superseded parents throughout.
+- A remaining production-conflicting quantity still poses production risk under the all-materials-needed-at-start assumption, even after buyer acceptance or an early partial delivery.
+- Never sum units of different parts into a work-order readiness quantity.
+- Updates, splits, issue dispositions, and history are transactional. Version-check both delivery and issue state; stale/duplicate submissions must not overwrite edits or duplicate supply/issues.
 
 ## 9. Seed data and demonstration
 Create the following synthetic dataset:
@@ -141,6 +144,8 @@ Create the following synthetic dataset:
 - 25 POs: 5 with 10 item lines each (20%); 10 with 1 item line each; and 10 with 2 item lines each (the latter two groups together are 80%). This produces 80 PO item lines in total.
 - 20 work orders across the two warehouses: five have two POs each and fifteen have one each, totaling 25 POs. Every PO has exactly one work order and every work order is represented. All PO items inherit that relationship. Allow repeat part numbers across different POs. This replaces the earlier 40-work-order seed requirement, which cannot give every work order a PO under the new relationship.
 - Delivery-schedule rows may exceed 80 because some PO items have split deliveries. Splitting never increases ordered quantity or PO item count.
+
+Give each supplier a coherent specialty/catalog: a plastics supplier sells molded/machined plastic parts, a bearing supplier sells bearings, and so on. The five large POs contain ten plausible parts from that supplier’s specialty; use a clearly named broad distributor only deliberately. Do not randomly assign valves, circuit boards, harnesses, and plastics to one specialist. Seed required dock dates and received dates explicitly.
 
 Distribute healthy records and exceptions across suppliers, POs, and work orders; do not make every record require action. Ensure every PO-to-work-order link has a matching destination warehouse and consistent quantities. Preserve the primary demo below as a clearly identifiable subset of the larger dataset, with the remaining records providing realistic context. Use fictional industrial parts and programs; no real Anduril data.
 
@@ -156,42 +161,44 @@ Required examples:
 - In-transit delivery with carrier-sourced manual update.
 - Received line shown read-only.
 
-Primary demo:
-1. PO line has 100 units for WO-A, production start D+7. Initial arrival D+5.
-2. Record supplier delay to D+16. Show all 100 units late against D+7.
-3. Record agreed split: 40 arrive D+6 and 60 arrive D+16, both for WO-A.
-4. The first 40 have no date conflict; the remaining 60 are late. WO-A remains at risk because all material is needed at start. Original order total stays 100.
-5. Add and complete a follow-up without improving the late delivery date. The 60-unit conflict remains.
-6. Refresh; changes persist. Reset with confirmation restores the baseline.
+Also seed open issues, accepted late issues, a date-restored resolution, split deliveries, and a later adverse update suitable for reopening. Make Last update sources and timestamps plausible. Keep 20 suppliers, 25 POs, 80 item lines, and 20 work orders as specified above.
 
-Reset is a demo utility, not a workflow. Clearly state that all visitors share the same synthetic dataset.
+Primary demo:
+1. 100 units for WO-A: required dock D+5, production start D+7, initial arrival D+5.
+2. Record delay to D+16. One open issue appears; late and production-conflict dates are visible.
+3. Split into 40 at D+5 and 60 at D+16. Choose Save and resolve issue with Split delivery agreed in that same form.
+4. Ordered remains 100; Shipped/Received remain zero. The two arrivals show quantities in parentheses. The 60-unit arrival keeps its warning; no open action remains for this handled split. Work-order production risk persists.
+5. Move the 60-unit estimate to D+18. A new issue opens. Accept delay and resolve inline without changing the date.
+6. Complete a reminder; arrival dates, Last update, and resolution remain unchanged. Refresh/restart preserves state; confirmed reset restores baseline.
 
 ## 10. Acceptance and testing
-Verify the primary demo end to end. Also test:
-- Every PO has exactly one work order; all items/deliveries inherit it. The seed contains 20 represented work orders and 25 POs.
-- Incoming rows show adjacent Expected arrival and Production start dates; PO header prominently shows Work order and Production start. No multi-work-order allocation UI remains.
-- A 10-item PO renders as one summary table with accordion rows, not 10 repeated sections; quantity breakdowns appear in columns.
-- PO delivery-state filters hide nonmatching deliveries and PO items without changing full item totals; empty results are clear.
-- Last update shows the correct information-update date and accessible source icon in both views; follow-up completion does not change it.
-- An expected-arrival update saves successfully with a blank note.
-- Unknown arrival is never treated as timely.
-- A split totaling 99 or 101 is rejected; all split deliveries retain the original PO and its single work order.
-- A failed split leaves the original delivery and history unchanged.
-- A second submit/stale version cannot create extra deliveries or overwrite updates silently.
-- In-transit/received splits are blocked.
-- Refresh and server restart preserve updates.
-- Date-only comparisons are stable across browser timezones.
-- Closing a follow-up does not clear date risk.
-- Deep-link navigation to a PO works after refresh.
+- Verify dataset counts, supplier/catalog coherence, one work order per PO, and matching warehouse links.
+- Ten-item PO is one semantic table. Collapsed quantities are Ordered/Shipped/Received, with no prose status or quantity breakdown.
+- Single delivery arrival omits quantity; multiple arrivals show quantities, warning/check/unknown icons, at most two dates, and +N expansion. Hidden open issues are still represented by Action count.
+- For 100 ordered, 30 in transit, 20 received, 50 not shipped: Shipped=50, Received=20. Full totals survive filters.
+- Required dock, expected arrival, and production start remain distinct. Updating estimates never resets baseline dates.
+- An arrival after required dock but before production start is late without production conflict.
+- Unknown is never timely; received rows show actual receipt date and have no active actions.
+- Blank arrival and resolution notes save successfully.
+- Save changes retains open issue; Save and resolve closes it in one atomic mutation without navigation.
+- Accepted late delivery leaves Needs action but remains in Late and retains date warning.
+- Repeated fetches/source-only edits do not reopen; later arrival, new unknown, or new overdue condition does.
+- Date restored rejects late/unknown/overdue estimates. Merely viewing an issue never resolves it.
+- Split Save changes transfers open review context to children; Save and resolve records child dispositions. Parent is excluded from current counts. Unrelated issues remain open.
+- Invalid split sums, stale versions, and transaction failures leave deliveries/issues/history unchanged; duplicate submits never duplicate supply or issues.
+- Block split of in-transit/received and update of received records.
+- Source icon/time is correct; issue resolution and task completion do not alter Last update.
+- Preserve filters, expansion, and useful focus after saves; show empty states when the last matching issue is resolved.
+- Verify date-only comparison across timezones, direct PO URL refresh, restart persistence, and confirmed reset.
 
-Automated tests demonstrate software behavior, not validation of buyer needs. Keep a short factual test log; do not invent interviews or measured production benefits.
+Automated tests demonstrate software behavior, not buyer validation. Record actual checks/findings; do not invent interviews or measured benefits.
 
 ## 11. Implementation order
-1. Scaffold repo and persistence per ARCHITECTURE.md; seed data.
+1. Preserve the existing app and Railway setup; migrate persistence and seed data per ARCHITECTURE.md. Scaffold only if the repo is empty.
 2. Build Incoming items and PO detail from the same data.
 3. Implement arrival updates and derived impact.
 4. Implement planned-delivery splitting and quantity checks.
-5. Add follow-ups, history, and confirmed reset.
+5. Implement inline issue resolution/reopening, history, optional follow-ups, and confirmed reset.
 6. Run targeted tests, production build, and Railway deployment checks.
 
 Finish each slice before adding polish. If a requirement threatens the narrow scope, explain the issue and propose the smallest adjustment; do not revive the broader ERP-like app.

@@ -1,26 +1,66 @@
+/** Internal delivery states; `planned` is displayed as "Not shipped". */
 export type DeliveryState = 'planned' | 'in_transit' | 'received';
 export const DELIVERY_STATES: DeliveryState[] = ['planned', 'in_transit', 'received'];
 export type UpdateSource = 'supplier_email' | 'supplier_call' | 'carrier_update' | 'other';
 export const UPDATE_SOURCES: UpdateSource[] = ['supplier_email', 'supplier_call', 'carrier_update', 'other'];
 
-/** Ordered strongest first; the order is the demo's attention ranking (PRD §6A). */
-export const ATTENTION_ORDER = ['date_conflict', 'arrival_overdue', 'date_unknown', 'follow_up_due', 'none'] as const;
-export type AttentionReason = (typeof ATTENTION_ORDER)[number];
+/** Physical date risk, derived from dates (PRD §5, §8). Ordered strongest first for display. */
+export const RISK_REASONS = ['production_conflict', 'late', 'overdue', 'unknown'] as const;
+export type RiskReason = (typeof RISK_REASONS)[number];
 
-export type DateStatus = 'late' | 'unknown' | 'no_conflict' | 'received';
+/** Reasons an issue can carry: physical risks plus an estimate that moved later. */
+export type IssueReason = RiskReason | 'moved_later';
 
-export interface FollowUpSummary {
-  id: number;
-  dueDate: string;
-  note: string;
-  deliveryId: number | null;
+export const RESOLUTION_OUTCOMES = ['accepted_delay', 'date_restored', 'split_agreed', 'reviewed'] as const;
+export type ResolutionOutcome = (typeof RESOLUTION_OUTCOMES)[number];
+
+export interface DeliveryFacts {
+  state: DeliveryState;
+  expectedArrival: string | null;
+  quantity: number;
+  requiredDock: string;
+  productionStart: string;
 }
 
-export interface DeliveryRow {
+/** Snapshot stored with a disposition: the exact facts the buyer reviewed. */
+export interface ReviewedFacts extends DeliveryFacts {
+  reasons: RiskReason[];
+  demoDate: string;
+}
+
+export interface PhysicalRisk {
+  reasons: RiskReason[];
+  /** Days after required dock date; null unless late. */
+  daysLate: number | null;
+  /** Days after production start; null unless conflicting. */
+  daysAfterStart: number | null;
+  /** Days past expected arrival; null unless overdue. */
+  daysOverdue: number | null;
+}
+
+export interface OpenIssue {
+  id: number;
+  version: number;
+  reasons: IssueReason[];
+  openedAt: string;
+  previousIssueId: number | null;
+  parentIssueId: number | null;
+}
+
+export interface Resolution {
+  issueId: number;
+  outcome: ResolutionOutcome;
+  resolvedAt: string;
+  resolvedBy: string;
+  note: string | null;
+}
+
+export interface DeliveryRow extends DeliveryFacts {
   deliveryId: number;
   version: number;
   poId: number;
   poNumber: string;
+  buyer: string;
   supplierId: number;
   supplierName: string;
   poLineId: number;
@@ -33,18 +73,14 @@ export interface DeliveryRow {
   workOrderId: number;
   workOrderNumber: string;
   program: string;
-  productionStart: string;
-  quantity: number;
-  state: DeliveryState;
-  expectedArrival: string | null;
-  receivedDate: string | null;
+  receivedAt: string | null;
   /** Source and time of the latest arrival-information update. */
   source: string;
-  updatedAt: string | null;
-  dateStatus: DateStatus;
-  reasons: AttentionReason[];
-  primaryReason: AttentionReason;
-  nextFollowUp: FollowUpSummary | null;
+  arrivalUpdatedAt: string | null;
+  risk: PhysicalRisk;
+  issue: OpenIssue | null;
+  /** Most recent resolution, shown when no issue is open. */
+  lastResolution: Resolution | null;
   openFollowUps: number;
   dueFollowUps: number;
 }
@@ -76,6 +112,7 @@ export interface HistoryEntry {
   eventType: string;
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
+  actor: string | null;
   source: string | null;
   note: string | null;
   createdAt: string;
@@ -87,12 +124,12 @@ export interface PoLineDetail {
   partNumber: string;
   description: string;
   unit: string;
+  requiredDock: string;
+  /** Full item totals: Received <= Shipped <= Ordered. Shipped includes received units. */
   orderedQty: number;
-  plannedQty: number;
-  inTransitQty: number;
+  shippedQty: number;
   receivedQty: number;
-  lateQty: number;
-  unknownQty: number;
+  openIssueCount: number;
   deliveries: DeliveryRow[];
 }
 
@@ -117,6 +154,8 @@ export interface PurchaseOrderDetail {
 export interface MetaResponse {
   demoDate: string;
   demoMode: boolean;
+  seedVersion: string | null;
+  currentSeedVersion: string;
 }
 
 export interface ApiError {

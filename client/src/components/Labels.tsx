@@ -1,68 +1,113 @@
-import { daysBetween, formatDate } from '../../../shared/dates';
-import { ATTENTION_LABELS, DATE_STATUS_LABELS, DELIVERY_STATE_LABELS, sourceLabel } from '../../../shared/labels';
-import type { AttentionReason, DateStatus, DeliveryRow, DeliveryState } from '../../../shared/types';
-
-export function ReasonBadge({ reason }: { reason: AttentionReason }) {
-  return <span className={`badge reason-${reason}`}>{ATTENTION_LABELS[reason]}</span>;
-}
+import { formatDate } from '../../../shared/dates';
+import { DELIVERY_STATE_LABELS, OUTCOME_LABELS, REASON_LABELS, sourceLabel } from '../../../shared/labels';
+import type { DeliveryRow, DeliveryState, IssueReason, PhysicalRisk } from '../../../shared/types';
+import { Icon, SOURCE_ICONS } from './Icons';
 
 export function StateLabel({ state }: { state: DeliveryState }) {
   return <span className={`state state-${state}`}>{DELIVERY_STATE_LABELS[state]}</span>;
 }
 
-export function DateStatusLabel({ status }: { status: DateStatus }) {
-  return <span className={`link-status status-${status}`}>{DATE_STATUS_LABELS[status]}</span>;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** Tooltip text for the exact date comparisons behind a risk icon. */
+export function riskTitle(risk: PhysicalRisk, row: Pick<DeliveryRow, 'requiredDock' | 'productionStart'>): string {
+  const parts: string[] = [];
+  if (risk.daysLate !== null) parts.push(`Late: ${plural(risk.daysLate, 'day')} after required dock date ${formatDate(row.requiredDock)}`);
+  if (risk.daysOverdue !== null) parts.push(`Overdue: expected ${plural(risk.daysOverdue, 'day')} ago, no receipt recorded`);
+  if (risk.daysAfterStart !== null) {
+    parts.push(`Production conflict: ${plural(risk.daysAfterStart, 'day')} after production start ${formatDate(row.productionStart)}`);
+  }
+  return parts.join('. ');
 }
 
-/** Expected arrival, or the receipt date for received deliveries. "Date unknown" for null. */
-export function ArrivalText({ row }: { row: Pick<DeliveryRow, 'state' | 'expectedArrival' | 'receivedDate' | 'productionStart'> }) {
-  if (row.state === 'received') return <span className="nowrap">Received {formatDate(row.receivedDate)}</span>;
-  if (!row.expectedArrival) return <span className="nowrap status-unknown">Date unknown</span>;
-  const late = daysBetween(row.productionStart, row.expectedArrival);
+type ArrivalRow = Pick<DeliveryRow, 'state' | 'expectedArrival' | 'receivedAt' | 'risk' | 'requiredDock' | 'productionStart'>;
+
+/** Expected arrival with risk icon, actual receipt date with a check, or an em dash for unknown. */
+export function ArrivalDate({ row, quantity }: { row: ArrivalRow; quantity?: number }) {
+  const qty = quantity !== undefined ? <span className="arrival-qty"> ({quantity})</span> : null;
+  if (row.state === 'received') {
+    return (
+      <span className="date-cell">
+        {row.receivedAt ? formatDate(row.receivedAt) : '—'} <Icon name="check" label={`Received${row.receivedAt ? ` ${formatDate(row.receivedAt)}` : ''}`} className="ok" />
+        {qty}
+      </span>
+    );
+  }
+  if (row.expectedArrival === null) {
+    return (
+      <span className="date-cell">
+        — <Icon name="question" label="Date unknown: no expected arrival" className="unknown" />
+        {qty}
+      </span>
+    );
+  }
+  const warn = row.risk.reasons.some((r) => r === 'late' || r === 'overdue');
   return (
-    <span className="nowrap">
+    <span className={`date-cell${warn ? ' risk-text' : ''}`}>
       {formatDate(row.expectedArrival)}
-      {late > 0 && (
-        <span className="late-text supplementary">
-          {late} day{late === 1 ? '' : 's'} after start
-        </span>
+      {warn && (
+        <>
+          {' '}
+          <Icon name="warning" label={riskTitle({ ...row.risk, daysAfterStart: null }, row)} className="risk" />
+        </>
+      )}
+      {qty}
+    </span>
+  );
+}
+
+/** Production start, with an accessible marker when the expected arrival conflicts with it. */
+export function ProductionStartDate({ row }: { row: ArrivalRow }) {
+  const conflict = row.risk.reasons.includes('production_conflict');
+  return (
+    <span className={`date-cell${conflict ? ' conflict-text' : ''}`}>
+      {formatDate(row.productionStart)}
+      {conflict && (
+        <>
+          {' '}
+          <Icon name="conflict" label={riskTitle({ ...row.risk, daysLate: null, daysOverdue: null }, row)} className="conflict" />
+        </>
       )}
     </span>
   );
 }
 
-const ICON_PATHS: Record<string, string> = {
-  // Envelope
-  supplier_email: 'M2 4h12v8H2z M2 4l6 5 6-5',
-  // Phone handset
-  supplier_call:
-    'M4.5 2h2l1 3-1.5 1a8 8 0 0 0 4 4l1-1.5 3 1v2a1.5 1.5 0 0 1-1.5 1.5A10.5 10.5 0 0 1 3 3.5 1.5 1.5 0 0 1 4.5 2z',
-  // Package
-  carrier_update: 'M2 5l6-3 6 3v6l-6 3-6-3z M2 5l6 3 6-3 M8 8v6',
-  // Document (Other / initial PO schedule)
-  document: 'M4 2h5l3 3v9H4z M9 2v3h3 M6 8h4 M6 10.5h4',
-};
+export function DateText({ date }: { date: string | null }) {
+  return <span className="date-cell">{formatDate(date)}</span>;
+}
 
-export function SourceIcon({ source }: { source: string }) {
-  const label = sourceLabel(source);
-  const path = ICON_PATHS[source] ?? ICON_PATHS.document;
-  return (
-    <svg className="source-icon" viewBox="0 0 16 16" width="14" height="14" role="img" aria-label={label}>
-      <title>{label}</title>
-      <path d={path} fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
+export const reasonList = (reasons: IssueReason[]) => reasons.map((r) => REASON_LABELS[r]).join(', ');
+
+/** Compact issue status: Open (with reasons in the tooltip), Resolved (with outcome), or an em dash. */
+export function IssueStatus({ row }: { row: Pick<DeliveryRow, 'issue' | 'lastResolution'> }) {
+  if (row.issue) {
+    return (
+      <span className="issue-open" title={`Open issue: ${reasonList(row.issue.reasons)}`}>
+        <Icon name="flag" label="Open issue" /> Open
+      </span>
+    );
+  }
+  if (row.lastResolution) {
+    const r = row.lastResolution;
+    return (
+      <span className="issue-resolved" title={`${OUTCOME_LABELS[r.outcome]} by ${r.resolvedBy}, ${new Date(r.resolvedAt).toLocaleString()}`}>
+        Resolved
+      </span>
+    );
+  }
+  return <span className="muted-text">—</span>;
 }
 
 const lastUpdateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 /** Date of the latest arrival-information update plus a source icon. Not a delivery date. */
-export function LastUpdate({ updatedAt, source }: { updatedAt: string | null; source: string }) {
-  if (!updatedAt) return <span>—</span>;
-  const at = new Date(updatedAt);
+export function LastUpdate({ at, source }: { at: string | null; source: string }) {
+  if (!at) return <span>—</span>;
+  const date = new Date(at);
+  const label = sourceLabel(source);
   return (
-    <span className="nowrap last-update" title={`${sourceLabel(source)} · ${at.toLocaleString()}`}>
-      {lastUpdateFormat.format(at)} <SourceIcon source={source} />
+    <span className="date-cell last-update" title={`${label} · ${date.toLocaleString()}`}>
+      {lastUpdateFormat.format(date)} <Icon name={SOURCE_ICONS[source] ?? 'document'} label={label} className="source" />
     </span>
   );
 }

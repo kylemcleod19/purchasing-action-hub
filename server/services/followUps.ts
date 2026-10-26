@@ -1,8 +1,12 @@
-// Supplier follow-up tasks. Follow-ups never change delivery data or clear a date risk.
+// Optional PO reminders. They never change delivery data, create or resolve issues, or refresh
+// arrival-information timestamps.
 import type { DB } from '../db/db.js';
 import { HttpError, notFound, stale } from '../errors.js';
-import { addHistory } from './deliveries.js';
+import { addHistory } from './history.js';
 import type { CreateFollowUpInput, PatchFollowUpInput } from '../../shared/schemas.js';
+
+const buyerOf = (db: DB, poId: number) =>
+  (db.prepare('SELECT buyer FROM purchase_orders WHERE id = ?').get(poId) as { buyer: string }).buyer;
 
 function assertDeliveryOnPo(db: DB, poId: number, deliveryId: number | null) {
   if (deliveryId === null) return;
@@ -39,6 +43,7 @@ export function createFollowUp(db: DB, poId: number, input: CreateFollowUpInput)
         eventType: 'follow_up_added',
         before: null,
         after: { dueDate: input.dueDate },
+        actor: buyerOf(db, poId),
         source: null,
         note: input.note,
       },
@@ -88,6 +93,7 @@ export function patchFollowUp(db: DB, id: number, input: PatchFollowUpInput): vo
           eventType: 'follow_up_edited',
           before: { dueDate: current.dueDate, note: current.note, delivery: current.deliveryId },
           after: { dueDate: input.dueDate, note: input.note, delivery: input.deliveryId },
+          actor: buyerOf(db, current.poId),
           source: null,
           note: input.note,
         },
@@ -112,6 +118,7 @@ export function patchFollowUp(db: DB, id: number, input: PatchFollowUpInput): vo
         eventType: 'follow_up_completed',
         before: { state: 'open' },
         after: { state: 'completed' },
+        actor: buyerOf(db, current.poId),
         source: null,
         note: input.completionNote ? `${current.note} — ${input.completionNote}` : current.note,
       },

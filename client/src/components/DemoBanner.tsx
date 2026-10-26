@@ -30,6 +30,9 @@ export function DemoBanner() {
         <strong>Demo date: {meta ? formatDate(meta.demoDate) : '…'}</strong> · Synthetic data only. All visitors share this
         dataset; no emails, orders, or supplier messages are sent.
       </span>
+      {meta?.seedVersion && meta.seedVersion !== meta.currentSeedVersion && (
+        <span className="seed-notice">This data predates the current demo seed. Reset to load the current scenarios.</span>
+      )}
       {meta?.demoMode && (
         <button type="button" className="link-button" onClick={() => setConfirming(true)}>
           Reset demo data
