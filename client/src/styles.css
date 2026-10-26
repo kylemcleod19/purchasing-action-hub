@@ -864,3 +864,11 @@ tr.row-late > td {
 tr.row-conflict > td {
   background: var(--row-conflict);
 }
+
+.icon.transit {
+  color: var(--accent);
+}
+
+.delivery-picker {
+  margin-bottom: 10px;
+}

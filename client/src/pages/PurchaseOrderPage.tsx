@@ -29,8 +29,23 @@ const ISSUE_FILTERS: { key: IssueFilter; label: string }[] = [
   { key: 'resolved', label: 'Resolved issues' },
 ];
 
+type DeliveryAction = 'arrival' | 'split' | 'resolve';
+const ACTION_TITLES: Record<DeliveryAction, string> = {
+  arrival: 'Update expected arrival',
+  split: 'Split delivery',
+  resolve: 'Resolve issue',
+};
+
+/** Which deliveries an action can target. */
+const ELIGIBLE: Record<DeliveryAction, (d: DeliveryRow) => boolean> = {
+  arrival: (d) => d.state !== 'received',
+  split: (d) => d.state === 'planned',
+  resolve: (d) => d.issue !== null,
+};
+
 type ModalState =
-  | { kind: 'arrival' | 'split' | 'resolve'; delivery: DeliveryRow }
+  // `choices` is set when an item-level action applies to several deliveries.
+  | { kind: DeliveryAction; delivery: DeliveryRow; choices?: DeliveryRow[] }
   | { kind: 'addFollowUp'; deliveryId: number | null }
   | { kind: 'editFollowUp' | 'completeFollowUp'; followUp: FollowUp };
 
@@ -148,7 +163,7 @@ export function PurchaseOrderPage() {
     .map((line) => ({ line, matching: line.deliveries.filter(matches) }))
     .filter(({ matching }) => matching.length > 0)
     .sort((a, b) => itemRank(a.line.deliveries) - itemRank(b.line.deliveries) || a.line.lineNo - b.line.lineNo);
-  const openAction = (kind: 'arrival' | 'split' | 'resolve', delivery: DeliveryRow) => setModal({ kind, delivery });
+  const openAction = (kind: DeliveryAction, delivery: DeliveryRow, choices?: DeliveryRow[]) => setModal({ kind, delivery, choices });
 
   return (
     <section>
@@ -339,19 +354,27 @@ export function PurchaseOrderPage() {
         />
       )}
 
-      {modal?.kind === 'arrival' && (
-        <Modal title="Update expected arrival" onClose={() => setModal(null)}>
-          <ArrivalForm delivery={modal.delivery} onCancel={() => setModal(null)} onSaved={(r) => saved(r, lineOf(modal.delivery.deliveryId))} />
-        </Modal>
-      )}
-      {modal?.kind === 'split' && (
-        <Modal title="Split delivery" onClose={() => setModal(null)} wide>
-          <SplitForm delivery={modal.delivery} onCancel={() => setModal(null)} onSaved={(r) => saved(r, lineOf(modal.delivery.deliveryId))} />
-        </Modal>
-      )}
-      {modal?.kind === 'resolve' && (
-        <Modal title="Resolve issue" onClose={() => setModal(null)}>
-          <ResolveForm delivery={modal.delivery} onCancel={() => setModal(null)} onSaved={(r) => saved(r, lineOf(modal.delivery.deliveryId))} />
+      {(modal?.kind === 'arrival' || modal?.kind === 'split' || modal?.kind === 'resolve') && (
+        <Modal title={ACTION_TITLES[modal.kind]} onClose={() => setModal(null)} wide={modal.kind === 'split'}>
+          {modal.choices && modal.choices.length > 1 && (
+            <DeliveryPicker
+              choices={modal.choices}
+              value={modal.delivery.deliveryId}
+              onChange={(delivery) => setModal({ ...modal, delivery })}
+            />
+          )}
+          {(() => {
+            // Keyed by delivery so switching the selection starts a fresh form.
+            const key = modal.delivery.deliveryId;
+            const props = {
+              delivery: modal.delivery,
+              onCancel: () => setModal(null),
+              onSaved: (r: SaveResult) => saved(r, lineOf(modal.delivery.deliveryId)),
+            };
+            if (modal.kind === 'arrival') return <ArrivalForm key={key} {...props} />;
+            if (modal.kind === 'split') return <SplitForm key={key} {...props} />;
+            return <ResolveForm key={key} {...props} />;
+          })()}
         </Modal>
       )}
       {(modal?.kind === 'addFollowUp' || modal?.kind === 'editFollowUp') && (
@@ -390,7 +413,7 @@ function ArrivalsStack({ line, matching, expanded, onMore }: { line: PoLineDetai
     <div className="arrival-stack">
       {shown.map((d) => (
         <div key={d.deliveryId} data-arrival-for={d.deliveryId} data-arrival-date={arrivalDate(d) ?? ''}>
-          <ArrivalDate row={d} quantity={multiple ? d.quantity : undefined} />
+          <ArrivalDate row={d} quantity={multiple ? d.quantity : undefined} showTransit />
         </div>
       ))}
       {hidden > 0 && (
@@ -402,28 +425,50 @@ function ArrivalsStack({ line, matching, expanded, onMore }: { line: PoLineDetai
   );
 }
 
-/** Open-issue count (covers deliveries hidden from the stack); a single delivery's actions inline. */
-function ItemAction({ line, onAction }: { line: PoLineDetail; onAction: (kind: 'arrival' | 'split' | 'resolve', d: DeliveryRow) => void }) {
-  const single = line.deliveries.length === 1 ? line.deliveries[0] : null;
+/**
+ * Item-level actions, always on the row. Each appears when at least one delivery qualifies; with
+ * several candidates the form opens with a delivery selector, defaulting to the most urgent one.
+ * The open-issue count also covers deliveries hidden from the Arrivals stack.
+ */
+function ItemAction({ line, onAction }: { line: PoLineDetail; onAction: (kind: DeliveryAction, d: DeliveryRow, choices?: DeliveryRow[]) => void }) {
+  const ordered = prioritizeArrivals(line.deliveries);
+  const candidates = (kind: DeliveryAction) => ordered.filter(ELIGIBLE[kind]);
+  const button = (kind: DeliveryAction, label: string, className = 'small') => {
+    const choices = candidates(kind);
+    if (choices.length === 0) return null;
+    return (
+      <button type="button" className={className} onClick={() => onAction(kind, choices[0], choices)}>
+        {label}
+      </button>
+    );
+  };
+  const issues = line.openIssueCount;
   return (
     <div className="item-action">
-      {line.openIssueCount > 0 && (
-        <span className="issue-count" title={`${line.openIssueCount} open issue${line.openIssueCount === 1 ? '' : 's'}`}>
-          <Icon name="flag" label={`${line.openIssueCount} open issue${line.openIssueCount === 1 ? '' : 's'}`} /> {line.openIssueCount}
+      {issues > 0 && (
+        <span className="issue-count" title={`${issues} open issue${issues === 1 ? '' : 's'}`}>
+          <Icon name="flag" label={`${issues} open issue${issues === 1 ? '' : 's'}`} /> {issues}
         </span>
       )}
-      {single && single.state !== 'received' && (
-        <>
-          {single.issue && (
-            <button type="button" className="primary small" onClick={() => onAction('resolve', single)}>
-              Resolve
-            </button>
-          )}
-          <button type="button" className="small" onClick={() => onAction('arrival', single)}>
-            Update arrival
-          </button>
-        </>
-      )}
+      {button('resolve', 'Resolve', 'primary small')}
+      {button('arrival', 'Update arrival')}
+      {button('split', 'Split')}
+      {candidates('arrival').length === 0 && <span className="hint">Read-only</span>}
+    </div>
+  );
+}
+
+function DeliveryPicker({ choices, value, onChange }: { choices: DeliveryRow[]; value: number; onChange: (d: DeliveryRow) => void }) {
+  return (
+    <div className="field delivery-picker">
+      <label htmlFor="delivery-picker">Delivery</label>
+      <select id="delivery-picker" value={value} onChange={(e) => onChange(choices.find((d) => d.deliveryId === Number(e.target.value))!)}>
+        {choices.map((d) => (
+          <option key={d.deliveryId} value={d.deliveryId}>
+            {`#${d.deliveryId} · ${d.quantity} ${d.unit} · ${DELIVERY_STATE_LABELS[d.state]} · ${d.expectedArrival ? formatDate(d.expectedArrival) : 'Date unknown'}${d.issue ? ' · open issue' : ''}`}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -460,7 +505,7 @@ function DeliveriesTable({ deliveries, onAction }: { deliveries: DeliveryRow[]; 
               <DateText date={d.requiredDock} />
             </td>
             <td>
-              <ArrivalDate row={d} />
+              <ArrivalDate row={d} showTransit />
             </td>
             <td>
               <ProductionStartDate row={d} />

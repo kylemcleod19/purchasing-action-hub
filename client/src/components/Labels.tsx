@@ -22,9 +22,22 @@ export function riskTitle(risk: PhysicalRisk, row: Pick<DeliveryRow, 'requiredDo
 
 type ArrivalRow = Pick<DeliveryRow, 'state' | 'expectedArrival' | 'receivedAt' | 'risk' | 'requiredDock' | 'productionStart'>;
 
-/** Expected arrival with risk icon, actual receipt date with a check, or an em dash for unknown. */
-export function ArrivalDate({ row, quantity }: { row: ArrivalRow; quantity?: number }) {
-  const qty = quantity !== undefined ? <span className="arrival-qty"> ({quantity})</span> : null;
+/**
+ * Expected arrival with risk icons, actual receipt date with a check, or an em dash for unknown.
+ * `showTransit` adds a package icon for in-transit shipments (PO Arrivals).
+ */
+export function ArrivalDate({ row, quantity, showTransit }: { row: ArrivalRow; quantity?: number; showTransit?: boolean }) {
+  const qty = (
+    <>
+      {showTransit && row.state === 'in_transit' && (
+        <>
+          {' '}
+          <Icon name="package" label="In transit" className="transit" />
+        </>
+      )}
+      {quantity !== undefined && <span className="arrival-qty"> ({quantity})</span>}
+    </>
+  );
   if (row.state === 'received') {
     return (
       <span className="date-cell">

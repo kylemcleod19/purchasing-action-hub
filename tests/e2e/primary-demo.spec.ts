@@ -155,7 +155,9 @@ test('a 10-item PO is one table; arrivals show at most two dates with +N; hidden
   const { rows } = await (await request.get('/api/incoming')).json();
   const lines = new Map<number, Set<number>>();
   for (const r of rows) lines.set(r.poId, (lines.get(r.poId) ?? new Set()).add(r.poLineId));
-  const poId = [...lines].find(([, l]) => l.size === 10)![0];
+  const poId = [...lines].find(
+    ([id, l]) => l.size === 10 && rows.some((r: { poId: number; state: string }) => r.poId === id && r.state === 'in_transit'),
+  )![0];
   // Give one planned item three deliveries with an open issue on each (Save changes split).
   const target = rows.find((r: { poId: number; state: string; quantity: number }) => r.poId === poId && r.state === 'planned' && r.quantity >= 6);
   const { demoDate } = await (await request.get('/api/meta')).json();
@@ -186,6 +188,22 @@ test('a 10-item PO is one table; arrivals show at most two dates with +N; hidden
   await expect(item.getByRole('img', { name: '3 open issues' })).toBeVisible();
   // All three have open issues, so they sort by date and the unknown one is behind +1.
   await expect(item.locator('[data-arrival-for]')).toHaveText([new RegExp(fmt(addDays(demoDate, 2))), new RegExp(fmt(addDays(demoDate, 3)))]);
+  // In-transit arrivals carry a package icon.
+  await expect(page.locator('.items-table .arrival-stack').getByRole('img', { name: 'In transit' }).first()).toBeVisible();
+
+  // Item-level actions stay on the row for multi-delivery items and ask which delivery to act on.
+  for (const name of ['Resolve', 'Update arrival', 'Split']) {
+    await expect(item.getByRole('button', { name, exact: true })).toBeVisible();
+  }
+  await item.getByRole('button', { name: 'Update arrival', exact: true }).click();
+  const picker = page.locator('.modal').getByLabel('Delivery', { exact: true });
+  await expect(picker.locator('option')).toHaveCount(3);
+  const firstChoice = await picker.inputValue();
+  await picker.selectOption({ index: 2 });
+  await expect(page.locator('.modal .context-table')).toContainText(`#${await picker.inputValue()}`);
+  expect(await picker.inputValue()).not.toBe(firstChoice);
+  await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
+
   await item.getByRole('button', { name: 'Show 1 more deliveries' }).click();
   await expect(page.locator('.deliveries-table tbody tr')).toHaveCount(3);
 

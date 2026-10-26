@@ -48,6 +48,14 @@ behaves as specified. They do not validate buyer needs.
 | Row tints: past production start uses `row-conflict` (light red); past required dock only uses `row-late` (very light red); applied to Incoming rows, PO delivery rows, and PO item rows (worst shown delivery) | Browser test passes: demo row, accepted 60-unit child, and item row are `row-conflict`; on-time 40 and overdue-only rows are untinted; PO-24108 is `row-late` |
 | `npm test` / `npm run test:e2e` / `npm run build` | 38 passed / 2 passed / pass |
 
+## 2026-10-26: in-transit icon and item-level actions (UI only)
+
+| Check | Result |
+|---|---|
+| Package icon (label "In transit") beside in-transit dates in the PO Arrivals stack and delivery table | Browser test passes |
+| Resolve / Update arrival / Split always on the item row when any delivery qualifies; with several candidates, a Delivery selector (most urgent first) picks the target and switching it reloads the form | Browser test passes: three-delivery item shows all three buttons; picker lists 3 deliveries; changing it updates the form |
+| `npm test` / `npm run test:e2e` / `npm run build` | 38 passed / 2 passed / pass |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:
