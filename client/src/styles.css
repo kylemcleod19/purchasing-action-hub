@@ -1127,3 +1127,18 @@ button.manage-button.needs-action {
   border: none;
   padding: 1px 6px 1px 0;
 }
+
+.sort-button {
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sort-indicator {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.sort-button.active .sort-indicator {
+  color: var(--accent);
+}

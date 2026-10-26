@@ -29,13 +29,33 @@ test('primary demo: one Manage deliveries button per row, inline resolution, acc
   // Incoming items: no Issue column, one Manage deliveries column, no ordering explanation.
   await page.goto('/');
   await expect(page.getByRole('button', { name: /Needs action/ }).first()).toHaveAttribute('aria-pressed', 'true');
-  const headers = await page.locator('.incoming-table thead th').allInnerTexts();
+  const headers = (await page.locator('.incoming-table thead th').allInnerTexts()).map((h) => h.replace(/[▲▼↕]/g, '').trim());
+  expect(headers[1]).toBe('PO · Line item');
   const dock = headers.indexOf('Required dock');
   expect(headers.slice(dock, dock + 3)).toEqual(['Required dock', 'Expected arrival', 'Production start']);
   expect(headers).not.toContain('Issue');
   expect(headers.at(-1)).toBe('Manage deliveries');
   await expect(page.getByText(/not an optimized priority/)).toHaveCount(0);
   await expect(incomingRows(page).first().getByRole('button')).toHaveCount(2); // expander + Manage deliveries
+
+  // Header sorting: ascending, descending, then back to the default order; kept in the URL across reload.
+  const qtyHeader = page.locator('.incoming-table thead th').filter({ hasText: 'Qty' });
+  const quantities = async () => (await incomingRows(page).locator('td.num').allInnerTexts()).map(Number);
+  const defaultOrder = await quantities();
+  await qtyHeader.getByRole('button').click();
+  await expect(qtyHeader).toHaveAttribute('aria-sort', 'ascending');
+  await expect(page).toHaveURL(/sort=qty&dir=asc/);
+  const asc = await quantities();
+  expect(asc).toEqual([...asc].sort((a, b) => a - b));
+  await qtyHeader.getByRole('button').click();
+  await expect(qtyHeader).toHaveAttribute('aria-sort', 'descending');
+  expect(await quantities()).toEqual([...asc].sort((a, b) => b - a));
+  await page.reload();
+  await expect(qtyHeader).toHaveAttribute('aria-sort', 'descending');
+  await qtyHeader.getByRole('button').click();
+  await expect(qtyHeader).toHaveAttribute('aria-sort', 'none');
+  await expect(page).not.toHaveURL(/sort=/);
+  expect(await quantities()).toEqual(defaultOrder);
 
   await page.getByRole('button', { name: /All outstanding/ }).click();
   await page.getByLabel('Search PO, part, or supplier').fill('PO-DEMO-01');

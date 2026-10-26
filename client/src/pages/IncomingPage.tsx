@@ -5,7 +5,21 @@ import { useDemo } from '../demo';
 import { formatClock } from '../../../shared/clock';
 import { formatDate } from '../../../shared/dates';
 import { compareDeliveries } from '../../../shared/impact';
-import { EMPTY_FILTERS, matchesFilters, parseIncomingQuery, serializeIncomingQuery, viewCounts, VIEWS, type IncomingFilters, type View } from '../../../shared/incomingFilters';
+import {
+  compareBySort,
+  EMPTY_FILTERS,
+  matchesFilters,
+  nextSort,
+  parseIncomingQuery,
+  parseSort,
+  serializeIncomingQuery,
+  viewCounts,
+  VIEWS,
+  type IncomingFilters,
+  type SortKey,
+  type SortState,
+  type View,
+} from '../../../shared/incomingFilters';
 import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS, OUTCOME_LABELS, sourceLabel } from '../../../shared/labels';
 import { DELIVERY_STATES, type DeliveryRow, type DeliveryState, type IncomingResponse } from '../../../shared/types';
 import type { SaveResult } from '../components/DeliveryForms';
@@ -43,13 +57,22 @@ export function IncomingPage() {
 
   // View, search, and filters live in the URL so they survive PO navigation, back, and reload.
   const { view, filters } = useMemo(() => parseIncomingQuery(searchParams, data?.filterOptions ?? null), [searchParams, data]);
-  const update = (nextView: View, next: IncomingFilters) => setSearchParams(serializeIncomingQuery(nextView, next), { replace: true });
+  const sort = useMemo(() => parseSort(searchParams), [searchParams]);
+  const update = (nextView: View, next: IncomingFilters, nextSortState: SortState | null = sort) =>
+    setSearchParams(serializeIncomingQuery(nextView, next, nextSortState), { replace: true });
   const setFilter = (patch: Partial<IncomingFilters>) => update(view, { ...filters, ...patch });
 
   const suppliers = useMemo(() => [...new Set((data?.rows ?? []).map((r) => r.supplierName))].sort(), [data]);
   const viewTest = VIEWS.find((v) => v.key === view)!.test;
   const matches = useCallback((r: DeliveryRow) => viewTest(r) && matchesFilters(r, filters), [viewTest, filters]);
-  const rows = useMemo(() => (data ? data.rows.filter(matches).sort(compareDeliveries) : []), [data, matches]);
+  // A header sort replaces the default demo ordering; ties keep the default order.
+  const rows = useMemo(
+    () => (data ? data.rows.filter(matches).sort(sort ? compareBySort(sort, compareDeliveries) : compareDeliveries) : []),
+    [data, matches, sort],
+  );
+  const header = (key: SortKey, label: string, numeric = false) => (
+    <SortableHeader key={key} sortKey={key} label={label} numeric={numeric} sort={sort} onSort={(k) => update(view, filters, nextSort(sort, k))} />
+  );
   const counts = useMemo(() => viewCounts(data?.rows ?? [], filters), [data, filters]);
   const anyFilter = filters.search || filters.supplier || filters.state || filters.destinations.length > 0 || filters.programs.length > 0;
   const returnTo = encodeURIComponent(location.search);
@@ -166,15 +189,15 @@ export function IncomingPage() {
                 <th>
                   <span className="visually-hidden">Details</span>
                 </th>
-                <th>PO</th>
-                <th>Supplier</th>
-                <th>Part</th>
-                <th className="num">Qty</th>
-                <th>State</th>
-                <th>Required dock</th>
-                <th>Expected arrival</th>
-                <th>Production start</th>
-                <th>Last update</th>
+                {header('po', 'PO · Line item')}
+                {header('supplier', 'Supplier')}
+                {header('part', 'Part')}
+                {header('qty', 'Qty', true)}
+                {header('state', 'State')}
+                {header('dock', 'Required dock')}
+                {header('arrival', 'Expected arrival')}
+                {header('start', 'Production start')}
+                {header('updated', 'Last update')}
                 <th>Manage deliveries</th>
               </tr>
             </thead>
@@ -259,6 +282,36 @@ export function IncomingPage() {
       )}
       {drawerOpen && <DemoScenariosDrawer onClose={() => setDrawerOpen(false)} />}
     </section>
+  );
+}
+
+/**
+ * Column header that sorts on click: ascending, descending, then back to the default demo ordering.
+ * aria-sort announces the current direction.
+ */
+function SortableHeader({
+  sortKey,
+  label,
+  numeric,
+  sort,
+  onSort,
+}: {
+  sortKey: SortKey;
+  label: string;
+  numeric: boolean;
+  sort: SortState | null;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = sort?.key === sortKey ? sort.dir : null;
+  return (
+    <th className={numeric ? 'num' : undefined} aria-sort={active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none'}>
+      <button type="button" className={`sort-button${active ? ' active' : ''}`} onClick={() => onSort(sortKey)}>
+        {label}
+        <span className="sort-indicator" aria-hidden="true">
+          {active === 'asc' ? ' ▲' : active === 'desc' ? ' ▼' : ' ↕'}
+        </span>
+      </button>
+    </th>
   );
 }
 

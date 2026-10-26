@@ -1,6 +1,7 @@
 // Incoming items views and filters (PRD §6A). Multi-select values combine with OR within a dimension
 // and AND across dimensions, alongside supplier, state, search, and the view. View counts apply the
-// other filters but not the view itself. State round-trips through URL query parameters.
+// other filters but not the view itself. State, including the column sort, round-trips through URL
+// query parameters.
 import { DELIVERY_STATES, type DeliveryRow, type DeliveryState, type FilterOptions } from './types.js';
 
 export type View = 'action' | 'outstanding' | 'late' | 'unknown' | 'received';
@@ -66,7 +67,7 @@ export function parseIncomingQuery(params: URLSearchParams, options: FilterOptio
   };
 }
 
-export function serializeIncomingQuery(view: View, f: IncomingFilters): URLSearchParams {
+export function serializeIncomingQuery(view: View, f: IncomingFilters, sort: SortState | null = null): URLSearchParams {
   const params = new URLSearchParams();
   if (view !== 'action') params.set('view', view);
   if (f.search) params.set('q', f.search);
@@ -74,5 +75,75 @@ export function serializeIncomingQuery(view: View, f: IncomingFilters): URLSearc
   if (f.state) params.set('state', f.state);
   for (const id of f.destinations) params.append('destination', String(id));
   for (const p of f.programs) params.append('program', p);
+  if (sort) {
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
+  }
   return params;
+}
+
+// ---- Column sorting ----
+
+export type SortKey = 'po' | 'supplier' | 'part' | 'qty' | 'state' | 'dock' | 'arrival' | 'start' | 'updated';
+export interface SortState {
+  key: SortKey;
+  dir: 'asc' | 'desc';
+}
+
+const SORT_KEYS: SortKey[] = ['po', 'supplier', 'part', 'qty', 'state', 'dock', 'arrival', 'start', 'updated'];
+const STATE_ORDER = { planned: 0, in_transit: 1, received: 2 } as const;
+
+/** The value a column displays: received rows show their receipt date in Expected arrival. */
+function sortValue(r: DeliveryRow, key: SortKey): string | number | null {
+  switch (key) {
+    case 'po':
+      return `${r.poNumber}\u0000${String(r.lineNo).padStart(4, '0')}`;
+    case 'supplier':
+      return r.supplierName.toLowerCase();
+    case 'part':
+      return r.partNumber;
+    case 'qty':
+      return r.quantity;
+    case 'state':
+      return STATE_ORDER[r.state];
+    case 'dock':
+      return r.requiredDock;
+    case 'arrival':
+      return r.state === 'received' ? r.receivedAt : r.expectedArrival;
+    case 'start':
+      return r.productionStart;
+    case 'updated':
+      return r.arrivalUpdatedAt;
+  }
+}
+
+/**
+ * Comparator for a chosen column. Empty values (unknown dates) sort last in either direction; ties
+ * fall back to `tiebreak` (the default demo ordering) so the order is stable.
+ */
+export function compareBySort(sort: SortState, tiebreak: (a: DeliveryRow, b: DeliveryRow) => number) {
+  const sign = sort.dir === 'asc' ? 1 : -1;
+  return (a: DeliveryRow, b: DeliveryRow): number => {
+    const va = sortValue(a, sort.key);
+    const vb = sortValue(b, sort.key);
+    if (va !== vb) {
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      return (va < vb ? -1 : 1) * sign;
+    }
+    return tiebreak(a, b);
+  };
+}
+
+/** Null means the default demo ordering. Unknown values fall back to it. */
+export function parseSort(params: URLSearchParams): SortState | null {
+  const key = params.get('sort') as SortKey | null;
+  if (!key || !SORT_KEYS.includes(key)) return null;
+  return { key, dir: params.get('dir') === 'desc' ? 'desc' : 'asc' };
+}
+
+/** Header click cycle: ascending, descending, then back to the default ordering. */
+export function nextSort(current: SortState | null, key: SortKey): SortState | null {
+  if (current?.key !== key) return { key, dir: 'asc' };
+  return current.dir === 'asc' ? { key, dir: 'desc' } : null;
 }

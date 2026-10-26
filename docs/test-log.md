@@ -70,6 +70,14 @@ behaves as specified. They do not validate buyer needs.
 
 Not run for this revision: `docker build`, container restart and redeploy persistence, `npm run dev` proxy check.
 
+## 2026-10-26: sortable Incoming headers (UI only)
+
+| Check | Result |
+|---|---|
+| Unit test: column sort with unknown dates last in both directions, received rows sorted by receipt date, asc → desc → default click cycle, sort round-trips through the URL, unknown sort keys ignored | Pass (`npm test`: 66 passed) |
+| Browser: first column reads "PO · Line item"; clicking Qty sorts ascending then descending with `aria-sort`, survives reload via `sort`/`dir` URL params, and a third click restores the default order | Pass (`npm run test:e2e`: 5 passed) |
+| `npm run build` | Pass |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:

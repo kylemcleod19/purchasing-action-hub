@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { addBusinessDays, businessDaysBetween, localDate, zonedTimeToUtc } from '../shared/clock.js';
 import { addDays } from '../shared/dates.js';
-import { EMPTY_FILTERS, matchesFilters, parseIncomingQuery, serializeIncomingQuery, viewCounts } from '../shared/incomingFilters.js';
+import {
+  compareBySort,
+  EMPTY_FILTERS,
+  matchesFilters,
+  nextSort,
+  parseIncomingQuery,
+  parseSort,
+  serializeIncomingQuery,
+  viewCounts,
+} from '../shared/incomingFilters.js';
 import { DEFAULT_OUTREACH_SETTINGS, elapsedFraction, exclusionReason, selectOutreachCandidates } from '../shared/outreach.js';
 import type { DeliveryRow, OutreachDelivery } from '../shared/types.js';
 
@@ -153,5 +162,23 @@ describe('incoming filters', () => {
     expect(parsed).toEqual({ view: 'late', filters: { ...EMPTY_FILTERS, search: 'a&b', destinations: [2], programs: ['Program B & C'] } });
     const stale = parseIncomingQuery(new URLSearchParams('view=nope&destination=9&program=Program%20Zed&program=Program%20Atlas&state=lost'), options);
     expect(stale).toEqual({ view: 'action', filters: { ...EMPTY_FILTERS, programs: ['Program Atlas'] } });
+  });
+
+  it('sorts by a column with unknown dates last in both directions, and round-trips the sort', () => {
+    const dated = (id: number, expectedArrival: string | null, state: DeliveryRow['state'] = 'planned', receivedAt: string | null = null) =>
+      row({ deliveryId: id, expectedArrival, state, receivedAt });
+    const list = [dated(1, '2026-11-05'), dated(2, null), dated(3, '2026-10-20', 'received', '2026-10-18'), dated(4, '2026-11-01')];
+    const byId = (a: DeliveryRow, b: DeliveryRow) => a.deliveryId - b.deliveryId;
+    const order = (dir: 'asc' | 'desc') => [...list].sort(compareBySort({ key: 'arrival', dir }, byId)).map((r) => r.deliveryId);
+    // Received rows sort by the receipt date they display.
+    expect(order('asc')).toEqual([3, 4, 1, 2]);
+    expect(order('desc')).toEqual([1, 4, 3, 2]);
+    expect(nextSort(null, 'qty')).toEqual({ key: 'qty', dir: 'asc' });
+    expect(nextSort({ key: 'qty', dir: 'asc' }, 'qty')).toEqual({ key: 'qty', dir: 'desc' });
+    expect(nextSort({ key: 'qty', dir: 'desc' }, 'qty')).toBeNull();
+    expect(nextSort({ key: 'qty', dir: 'desc' }, 'dock')).toEqual({ key: 'dock', dir: 'asc' });
+    const params = serializeIncomingQuery('action', EMPTY_FILTERS, { key: 'dock', dir: 'desc' });
+    expect(parseSort(new URLSearchParams(params.toString()))).toEqual({ key: 'dock', dir: 'desc' });
+    expect(parseSort(new URLSearchParams('sort=bogus&dir=desc'))).toBeNull();
   });
 });
