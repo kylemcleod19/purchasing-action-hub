@@ -9,7 +9,7 @@ follow up on. They can record agreed arrival changes and delivery splits.
   inherit that work order's production start. A work order may have several POs.
 - **Buyer action is separate from physical risk:** a delivery gets at most one open *issue* when it
   becomes late, conflicts with production, goes overdue, loses its date, or moves later. The buyer
-  resolves it inline (Accepted delay, Date restored, Split delivery agreed, or Reviewed). Date warnings
+  resolves it inline (Accepted current estimate, Date restored, Split delivery agreed, or Reviewed). Date warnings
   stay visible after resolution.
 - **One Manage deliveries button per row:** both pages open the same modal to update an arrival, accept
   current dates, or split a not-shipped delivery. The button is blue with a flag while its scope has an open
@@ -121,12 +121,12 @@ The demo records are PO **PO-DEMO-01** (Cobalt Harness Works, part HX-2210, 100 
    parentheses, and the 60 keeps its warning, but the button is white again. Production risk for WO-DEMO-A
    persists, because all material is needed at start.
 5. Open **Manage deliveries** again (it selects the 60), set D+18, and **Save changes**. A new issue opens,
-   linked to the earlier one. Open it once more, choose **Accept current dates**, and click **Accept dates and
-   resolve**. Neither the date nor Last update changes.
+   linked to the earlier one. Open it once more, choose **Accept current estimate**, and click **Accept current
+   estimate and resolve**. The issue section shows the change that triggered review (D+16 → D+18). Neither the date nor Last update changes.
 6. On **Follow-ups**, add a reminder and complete it. Arrival dates, Last update, and the resolution don't
    change. Try the filters: *Needs action* is now empty, *Resolved issues* shows the item, and totals never
    change. **← Incoming items** returns with your view and search intact. The 60 is no longer in *Needs action*
-   but still appears under *Late*. **Change history (N)** stays collapsed until you open it.
+   but still appears under *After dock date*. **Change history (N)** stays collapsed until you open it.
 
 ## Scenario demos (simulated collection, PRD §13)
 
@@ -148,25 +148,25 @@ required dock D+3 and production start D+5.
    (confirmed within 3 business days), line 9 (received), and line 10 (usable tracking). The send records one
    simulated request to an `example.com` address with a one-business-day reply deadline. A second send to the
    same supplier on the same demo date is refused.
-2. **Process partial reply** (*Process supplier reply*). Lines 1–4 show *Confirmed*: Last update refreshes and
+2. **Process partial reply** (*Simulate supplier reply*). Lines 1–4 show *Confirmed*: Last update refreshes and
    the dates are unchanged. PO-24105 line 5 shows *Revised* to D+4 (late, before start) and PO-24116 line 1
    *Revised* to D+7 (late and production conflict); each links to its delivery issue. "Should ship Friday" on
    line 6 is *Needs clarification* and keeps its date. PO-24116 line 2 shows *No reply*.
 3. **Reach follow-up deadline** (*Advance clock to …*). One call task holds the two open items. It is linked
    from the table and visible on both POs' Follow-ups tab.
-4. **Process clarification** (*Process clarification email*). Both items are answered. The unstarted task
+4. **Process clarification** (*Simulate clarification reply*). Both items are answered. The unstarted task
    closes as *Answered by supplier*, and the late issues stay open for the buyer.
 
 **Shipment tracking (Granite Bearing Co., PO-24101 and PO-24117).** Shipment SH-DEMO-01 (Demo Freight
 `DEMO-TRACK-001`, not a live carrier) carries 30 of 50 on PO-24101 line 1, PO-24101 line 2, and PO-24117 line 1.
 The other 20 on line 1 are a separate not-shipped commitment, shown as its own row.
-1. **Apply carrier delay** moves exactly those three rows to D+6 and opens three issues. Two are production
+1. **Apply carrier delay** (*Simulate carrier delay*) moves exactly those three rows to D+6 and opens three issues. Two are production
    conflicts; PO-24117's is late but before start. Previous and current arrivals sit side by side; the remainder
    keeps D+2.
-2. **Apply further delay** (D+8). Any delay the buyer accepted in Manage deliveries reopens, and open issues
+2. **Apply further delay** (*Simulate further delay*, D+8). Any delay the buyer accepted in Manage deliveries reopens, and open issues
    update without duplicates. If you edit a linked delivery's date first, that delivery is held for review.
 3. **Advance to delivery time** moves the shared clock to the carrier delivery time.
-4. **Record carrier delivery** shows *Delivered / receipt pending* for the carrier, separately from warehouse
+4. **Record carrier delivery** (*Simulate carrier delivery*) shows *Delivered / receipt pending* for the carrier, separately from warehouse
    Received, which stays unchanged, as do the issues. These quantities drop out of supplier outreach.
 
 **Additional test cases** (collapsed on each tab): duplicate carrier event (no change), older carrier event
@@ -184,15 +184,16 @@ The seed has 20 suppliers, each selling one coherent part family. Each of the fi
 holds one ten-line PO from its own catalog. There are 25 POs, 80 items, and 20 work orders (five with two
 POs). Examples:
 - Arrival before production start.
-- Late without production conflict (PO-24108).
+- After dock date without production conflict (PO-24108).
 - Missing date (PO-24109).
-- Overdue with no receipt, dispatched without a tracking number (PO-24110).
+- Past expected arrival with no receipt, dispatched without a tracking number (PO-24110).
 - Reminder due with a timely arrival (PO-24107).
 - Carrier update that opened an issue (PO-24111).
 - Received line (PO-24112).
 - Date-restored resolution (PO-24113).
 - Split agreed with one late child (PO-24114).
-- Accepted delay that a worse date will reopen (PO-24115).
+- Accepted current estimate that a worse date will reopen (PO-24115).
+- On-time delivery under review because its estimate moved later, Oct 27 → Oct 28 when reset on Oct 26 (PO-24111).
 - Items with deliveries on different dates for the same work order.
 - Tracking: shared shipment SH-DEMO-01 across two POs, one item shipped in two portions with two tracking
   numbers (PO-24101 line 3), and one tracked portion with a not-shipped remainder (PO-24101 line 1).
@@ -201,7 +202,8 @@ POs). Examples:
 
 - Comparisons use date-only `YYYY-MM-DD` strings, so results are the same in any browser timezone.
   History timestamps are UTC, and overdue checks use the persisted demo date.
-- *Late*: the expected arrival is after the required dock date. *Production conflict*: the expected
+- *After dock date* (internally "late"): the expected arrival is after the required dock date. *Past expected
+  arrival* (internally "overdue"): the expected date has passed with no receipt recorded. *Production conflict*: the expected
   arrival is after production start. Equal dates are not flagged, because receiving and inspection time
   are not modeled.
 - An unknown date is never treated as on time. Received deliveries show the actual receipt date and have

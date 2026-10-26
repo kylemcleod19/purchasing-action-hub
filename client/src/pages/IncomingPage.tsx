@@ -140,7 +140,7 @@ export function IncomingPage() {
           onChange={(values) => setFilter({ destinations: values.map(Number) })}
         />
         <MultiSelect
-          label="Program line"
+          label="Program"
           options={(data?.filterOptions.programs ?? []).map((p) => ({ value: p, label: p }))}
           selected={filters.programs}
           onChange={(values) => setFilter({ programs: values })}

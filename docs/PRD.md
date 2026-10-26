@@ -50,9 +50,9 @@ Do not build a separate work-order, supplier, task-management, or inventory modu
 | In transit | Dispatched quantity not yet received |
 | Received | Read-only upstream fact; display actual received date |
 | Production start | Read-only start of the PO's single work order |
-| Late | Outstanding expected arrival is after required dock date |
+| After dock date (Late) | Outstanding expected arrival is after required dock date. Display label "After dock date" |
 | Production conflict | Outstanding expected arrival is after production start |
-| Overdue | Expected arrival is before demo date, with no recorded receipt |
+| Past expected arrival (Overdue) | Expected arrival is before demo date, with no recorded receipt. Display label "Past expected arrival" |
 | Date unknown | Outstanding delivery has no expected arrival |
 | Needs action | Delivery has an open issue requiring buyer disposition |
 | Resolved | Buyer disposed of the issue; does not mean the material is on time |
@@ -65,7 +65,7 @@ One row per active delivery commitment, including separate rows for splits. Inhe
 
 Use compact columns: PO, supplier, part, quantity, state, Required dock, Expected arrival, Production start, Last update, Manage deliveries. Remove the Issue column and standalone issue badges/icon clusters. Destination and descriptive context can appear in expansion. Dates must be visible, not buried in tooltips. Use numeric quantities, short state labels, and icons; never compose sentences explaining quantities or lateness in cells.
 
-Default filter: Needs action (open delivery issues). Also provide All outstanding, Late, Date unknown, and Received. Late includes accepted/resolved delays. Search PO/part/supplier and filter supplier and delivery state. Add Destination and Program line multi-select dropdowns as specified below. Sort open issues by production conflict first, then production start, required dock, and stable ID. This is a demo ordering rule, not optimized priority.
+Default filter: Needs action (open delivery issues). Also provide All outstanding, After dock date, Date unknown, and Received. After dock date includes accepted/resolved delays. Search PO/part/supplier and filter supplier and delivery state. Add Destination and Program multi-select dropdowns as specified below. Sort open issues by production conflict first, then production start, required dock, and stable ID. This is a demo ordering rule, not optimized priority.
 
 One Manage deliveries button opens the shared modal specified below, preselecting this incoming delivery. Opening the PO expands the relevant item. No trip to Follow-ups is required to resolve an issue.
 
@@ -103,14 +103,14 @@ Use one component for both pages. A PO-item button opens all deliveries for that
 
 Button style follows open issues in its scope: blue fill with one incorporated flag for Needs action; white outline without flag otherwise. A count is shown only when multiple open issues exist. For the incoming button the scope is that delivery; for the PO item it is all active deliveries of the item, even when filters hide some. Accessible name/tooltip states “Needs action” and count; color alone is insufficient. An accepted late delivery keeps date warnings but has a white button. This is action priority, not an application error or guarantee of timeliness.
 
-Keep part/PO, selected quantity/state, required dock, expected arrival, production start, and tracking context visible. Put issue reasons in a short labeled section within the modal, not icon clusters in the main table. Offer three modes: Update arrival; Accept current dates; Split delivery. Only show Accept current dates for an open issue with a known date. For unknown estimates offer “Reviewed / no further action,” explicitly retaining uncertainty. Acceptance records disposition without modifying dates or arrival-information timestamps. Use existing outcomes and history rules.
+Keep part/PO, selected quantity/state, required dock, expected arrival, production start, and tracking context visible. Put issue reasons in a short labeled section within the modal, not icon clusters in the main table. Offer three modes: Update arrival; Accept current estimate; Split delivery. Only show Accept current estimate for an open issue with a known date; it has a single outcome (Accepted current estimate). Date restored is offered only with an actual date update or split. When an issue is open because the estimate moved later, show the previous → current date. For unknown estimates offer “Reviewed / no further action,” explicitly retaining uncertainty. Acceptance records disposition without modifying dates or arrival-information timestamps. Use existing outcomes and history rules.
 
-Show Split only for not-shipped quantities; received records remain read-only. Update/split retain Save changes and Save and resolve issue, optional notes, version checks, and preview tables. Acceptance uses an explicit “Accept dates and resolve” submit button. Scope each resolution to the selected delivery/issue or its split children; never bulk-resolve the item’s other issues. No nested modal or return to Follow-ups is required.
+Show Split only for not-shipped quantities; received records remain read-only. Update/split retain Save changes and Save and resolve issue, optional notes, version checks, and preview tables. Acceptance uses an explicit “Accept current estimate and resolve” submit button. Scope each resolution to the selected delivery/issue or its split children; never bulk-resolve the item’s other issues. No nested modal or return to Follow-ups is required.
 
 Opening/selecting/closing the modal never changes saved state. Cancel discards unsaved inputs; switching delivery/mode with dirty input asks before discarding it. Retain input on failed save and return focus to the originating button on close. Refresh both views after save and preserve filters/expansion.
 
 ### Incoming destination and program filters
-Add labeled searchable multi-select dropdowns with checkboxes for Destination and Program line, using existing warehouse and work-order program values. “Program line” is the display label for the existing program field; do not introduce a new production-line entity. Empty selection means all; selections within a filter combine with OR, and different filters combine with AND alongside supplier/state/search/view. Include selected counts, Clear per filter, and Clear all. Derive options from the full dataset, not just visible rows.
+Add labeled searchable multi-select dropdowns with checkboxes for Destination and Program, using existing warehouse and work-order program values. “Program” is the display label for the existing program field; do not introduce a new production-line entity. Empty selection means all; selections within a filter combine with OR, and different filters combine with AND alongside supplier/state/search/view. Include selected counts, Clear per filter, and Clear all. Derive options from the full dataset, not just visible rows.
 
 Preserve these selections, search, and current view in URL query parameters through PO navigation/back and reload. View counts reflect the other active filters without applying the selected view itself. Show a helpful no-results state. No new columns are required; destination/program context remains available in row details and the modal. Remove the implementation-oriented sort explanation beneath Incoming items; keep ordering policy in documentation only.
 
@@ -129,7 +129,7 @@ Use the same Save changes / Save and resolve issue choices when the source has a
 Maintain at most one open issue per active delivery. Multiple reasons can belong to that issue. Open an issue for an outstanding delivery when it first has a late arrival, production conflict, overdue arrival, unknown date, or a later expected arrival than its prior known estimate. A moved-later estimate can require review even while still before required dock date.
 
 Resolution outcomes:
-- **Accepted delay**: buyer accepts the current commitment; no date edit required. Offer “Accept delay and resolve” inline.
+- **Accepted current estimate** (stored as accepted_delay): buyer accepts the current commitment; no date edit required. Offer “Accept current estimate and resolve” inline.
 - **Date restored**: updated arrival meets required dock date and is not overdue; validate this outcome.
 - **Split delivery agreed**: the split form saved a negotiated schedule; some children may remain late.
 - **Reviewed / no further action**: explicit disposition for other reviewed cases, including unresolved uncertainty. Do not imply the uncertainty disappeared.

@@ -56,7 +56,7 @@ type Mode = 'update' | 'accept' | 'split' | 'view';
 
 const MODE_LABELS: Record<Exclude<Mode, 'view'>, string> = {
   update: 'Update arrival',
-  accept: 'Accept current dates',
+  accept: 'Accept current estimate',
   split: 'Split delivery',
 };
 

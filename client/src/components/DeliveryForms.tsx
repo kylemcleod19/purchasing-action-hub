@@ -147,7 +147,7 @@ function ResolutionFields({
           ))}
         </select>
         {outcome === 'date_restored' && !dateRestoredValid && (
-          <span className="field-warning">Date restored needs an arrival on or before the required dock date that is not overdue.</span>
+          <span className="field-warning">Date restored needs an arrival on or before the required dock date and not in the past.</span>
         )}
       </div>
       <div className="field">
@@ -442,18 +442,17 @@ export function SplitForm({ delivery, onSaved, onCancel, onDirtyChange }: FormPr
 }
 
 /**
- * Accept current dates: resolves the open issue without PATCHing dates, source, or Last update. For an
- * unknown estimate the only disposition is Reviewed / no further action, which keeps the uncertainty.
+ * Accept current estimate: one outcome that resolves the open issue without PATCHing dates, source, or
+ * Last update. Date restored belongs to Update arrival / Split, where a date actually changes. For an
+ * unknown estimate the disposition is Reviewed / no further action, which keeps the uncertainty.
  */
 export function AcceptForm({ delivery, onSaved, onCancel, onDirtyChange }: FormProps) {
-  const { meta } = useDemo();
   const unknown = delivery.expectedArrival === null;
-  const [outcome, setOutcome] = useState<ResolutionOutcome>(unknown ? 'reviewed' : 'accepted_delay');
+  const outcome: ResolutionOutcome = unknown ? 'reviewed' : 'accepted_delay';
   const [note, setNote] = useState('');
   const { saving, error, fields, run } = useSubmit();
   const issue = delivery.issue!;
-  const dateRestoredValid = meetsDateRestored(delivery, meta?.demoDate ?? '');
-  useReportDirty(note !== '' || outcome !== (unknown ? 'reviewed' : 'accepted_delay'), onDirtyChange);
+  useReportDirty(note !== '', onDirtyChange);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -472,31 +471,19 @@ export function AcceptForm({ delivery, onSaved, onCancel, onDirtyChange }: FormP
       <p className="hint">
         {unknown
           ? 'The expected arrival stays unknown. Resolving records that you reviewed it; the date warning remains.'
-          : 'Resolving records your decision. Dates, Last update, and date warnings stay as they are.'}
+          : 'Resolving records that you accept the current estimate. Dates, Last update, and date warnings stay as they are.'}
       </p>
       <FormErrors error={error} fields={fields} />
-      {unknown ? (
-        <div className="field">
-          <label htmlFor="resolution-note">Resolution note (optional)</label>
-          <textarea id="resolution-note" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
-        </div>
-      ) : (
-        <ResolutionFields
-          legend="Resolution"
-          outcomes={['accepted_delay', 'date_restored', 'reviewed']}
-          outcome={outcome}
-          setOutcome={setOutcome}
-          note={note}
-          setNote={setNote}
-          dateRestoredValid={dateRestoredValid}
-        />
-      )}
+      <div className="field">
+        <label htmlFor="resolution-note">Resolution note (optional)</label>
+        <textarea id="resolution-note" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
+      </div>
       <div className="form-actions">
         <button type="button" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
-        <button type="submit" className="primary" disabled={saving || (outcome === 'date_restored' && !dateRestoredValid)}>
-          {saving ? 'Saving…' : unknown ? 'Mark reviewed and resolve' : 'Accept dates and resolve'}
+        <button type="submit" className="primary" disabled={saving}>
+          {saving ? 'Saving…' : unknown ? 'Mark reviewed and resolve' : 'Accept current estimate and resolve'}
         </button>
       </div>
     </form>

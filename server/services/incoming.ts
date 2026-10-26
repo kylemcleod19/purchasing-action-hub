@@ -4,7 +4,7 @@ import type { DB } from '../db/db.js';
 import { compareDeliveries, physicalRisk } from '../../shared/impact.js';
 import type { DeliveryRow, FilterOptions, OpenIssue, Resolution, ShipmentInfo } from '../../shared/types.js';
 
-type DeliveryRecord = Omit<DeliveryRow, 'risk' | 'issue' | 'lastResolution' | 'openFollowUps' | 'dueFollowUps' | 'shipment'>;
+type DeliveryRecord = Omit<DeliveryRow, 'risk' | 'issue' | 'lastResolution' | 'openFollowUps' | 'dueFollowUps' | 'shipment' | 'lastEstimateChange'>;
 
 interface ShipmentRecord extends Omit<ShipmentInfo, 'trackingUsable'> {
   deliveryId: number;
@@ -90,6 +90,31 @@ export function loadDeliveryRows(db: DB, demoDate: string): DeliveryRow[] {
     shipments.set(deliveryId, { ...shipment, trackingUsable: trackingUsable === 1 });
   }
 
+  // Latest real estimate change per delivery, from history; split children fall back to their parent.
+  const changes = new Map<number, NonNullable<DeliveryRow['lastEstimateChange']>>();
+  for (const h of db
+    .prepare(
+      `SELECT delivery_id AS deliveryId, before_json AS beforeJson, after_json AS afterJson, created_at AS at
+       FROM change_history WHERE event_type = 'arrival_updated' AND delivery_id IS NOT NULL ORDER BY created_at, id`,
+    )
+    .all() as { deliveryId: number; beforeJson: string; afterJson: string; at: string }[]) {
+    const from = (JSON.parse(h.beforeJson) as { expectedArrival: string | null }).expectedArrival;
+    const to = (JSON.parse(h.afterJson) as { expectedArrival: string | null }).expectedArrival;
+    if (from !== to) changes.set(h.deliveryId, { from, to, at: h.at });
+  }
+  const parents = new Map(
+    (db.prepare('SELECT id, parent_delivery_id AS parentId FROM deliveries WHERE parent_delivery_id IS NOT NULL').all() as { id: number; parentId: number }[]).map(
+      (r) => [r.id, r.parentId],
+    ),
+  );
+  const estimateChange = (id: number): DeliveryRow['lastEstimateChange'] => {
+    for (let current: number | undefined = id; current !== undefined; current = parents.get(current)) {
+      const change = changes.get(current);
+      if (change) return change;
+    }
+    return null;
+  };
+
   const followUps = db
     .prepare(`SELECT po_id AS poId, delivery_id AS deliveryId, due_date AS dueDate FROM follow_ups WHERE state = 'open'`)
     .all() as { poId: number; deliveryId: number | null; dueDate: string }[];
@@ -101,6 +126,7 @@ export function loadDeliveryRows(db: DB, demoDate: string): DeliveryRow[] {
       return {
         ...d,
         shipment: shipments.get(d.deliveryId) ?? null,
+        lastEstimateChange: estimateChange(d.deliveryId),
         risk: physicalRisk(d, demoDate),
         issue: openByDelivery.get(d.deliveryId) ?? null,
         lastResolution: resolvedByDelivery.get(d.deliveryId) ?? null,
@@ -111,7 +137,7 @@ export function loadDeliveryRows(db: DB, demoDate: string): DeliveryRow[] {
     .sort(compareDeliveries);
 }
 
-/** Destination and Program line options from the full dataset, not just visible rows. */
+/** Destination and Program options from the full dataset, not just visible rows. */
 export function loadFilterOptions(db: DB): FilterOptions {
   return {
     destinations: db.prepare('SELECT id, name FROM warehouses ORDER BY name').all() as FilterOptions['destinations'],

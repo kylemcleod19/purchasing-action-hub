@@ -114,6 +114,14 @@ Not run for this revision: `docker build`, container restart and redeploy persis
 | `npm run build` / `npm test` / `npm run test:e2e` | Pass / 67 passed / 5 passed (run several times) |
 | One run hit a pre-existing race in the filter test (row count read before the Destination filter re-rendered); the check now waits for the filtered table | Fixed; later runs pass |
 
+## 2026-10-26: terminology review (acceptance, After dock date / Past expected arrival, Program, simulation labels)
+
+| Check | Result |
+|---|---|
+| API: PO-24111 line 1 is on time (no date risk) with a moved-later issue, and its row carries the estimate change D+1 → D+2 | Pass (`npm test`: 68 passed) |
+| Browser: Accept current estimate has one outcome (no selector, no Date restored) and resolves as "Accepted current estimate" without changing dates or Last update; the issue section shows "Estimate moved later: D+16 → D+18"; tooltips read "After dock date: …" and "Past expected arrival: …"; Incoming tab "After dock date"; filter "Program"; demo buttons "Simulate supplier reply / clarification reply / carrier delay / further delay / carrier delivery / duplicate event / older event / past-date confirmation"; supplier column reads "Current expected arrival" before sending and "Arrival when requested" after, with "Status"; carrier tab shows "Warehouse receipt: Not yet delivered by carrier" then "Warehouse receipt pending", per-row Received quantities, and no totals that add different parts | Pass (`npm run test:e2e`: 5 passed, run twice) |
+| `npm run build` | Pass |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:

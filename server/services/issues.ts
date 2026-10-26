@@ -168,8 +168,8 @@ export function validateOutcome(outcome: ResolutionOutcome, facts: DeliveryFacts
     throw new HttpError(422, 'Split delivery agreed is only available when saving a split.', { outcome: 'Choose another outcome.' });
   }
   if (outcome === 'date_restored' && !meetsDateRestored(facts, demoDate)) {
-    throw new HttpError(422, 'Date restored needs an expected arrival on or before the required dock date that is not overdue.', {
-      outcome: 'The arrival is late, unknown, or overdue. Choose Accepted delay or Reviewed instead.',
+    throw new HttpError(422, 'Date restored needs an expected arrival on or before the required dock date and not in the past.', {
+      outcome: 'The arrival is after the dock date, unknown, or past. Choose Accepted current estimate or Reviewed instead.',
     });
   }
 }

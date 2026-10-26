@@ -20,14 +20,14 @@ export const DELIVERY_STATE_LABELS: Record<DeliveryState, string> = {
 
 export const REASON_LABELS: Record<IssueReason, string> = {
   production_conflict: 'Production conflict',
-  late: 'Late',
-  overdue: 'Overdue',
+  late: 'After dock date',
+  overdue: 'Past expected arrival',
   unknown: 'Date unknown',
   moved_later: 'Estimate moved later',
 };
 
 export const OUTCOME_LABELS: Record<ResolutionOutcome, string> = {
-  accepted_delay: 'Accepted delay',
+  accepted_delay: 'Accepted current estimate',
   date_restored: 'Date restored',
   split_agreed: 'Split delivery agreed',
   reviewed: 'Reviewed / no further action',
@@ -129,4 +129,4 @@ export const OUTREACH_REQUEST_TEXT =
   'Please confirm the expected arrival dates at our warehouse below, or provide revised dates and quantities.';
 
 export const DATE_RULES_NOTE =
-  'Late: expected arrival after required dock date. Production conflict: expected arrival after production start. Equal dates are not flagged; receiving and inspection time are not modeled.';
+  'After dock date: expected arrival is after the required dock date. Past expected arrival: the expected date has passed with no receipt recorded. Production conflict: expected arrival is after production start. Equal dates are not flagged; receiving and inspection time are not modeled.';

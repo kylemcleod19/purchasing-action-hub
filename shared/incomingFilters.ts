@@ -9,8 +9,8 @@ export type View = 'action' | 'outstanding' | 'late' | 'unknown' | 'received';
 export const VIEWS: { key: View; label: string; test: (r: DeliveryRow) => boolean }[] = [
   { key: 'action', label: 'Needs action', test: (r) => r.issue !== null },
   { key: 'outstanding', label: 'All outstanding', test: (r) => r.state !== 'received' },
-  // Late includes accepted/resolved delays: physical risk is independent of disposition.
-  { key: 'late', label: 'Late', test: (r) => r.risk.reasons.includes('late') },
+  // "After dock date" includes accepted/resolved delays: physical risk is independent of disposition.
+  { key: 'late', label: 'After dock date', test: (r) => r.risk.reasons.includes('late') },
   { key: 'unknown', label: 'Date unknown', test: (r) => r.risk.reasons.includes('unknown') },
   { key: 'received', label: 'Received', test: (r) => r.state === 'received' },
 ];
@@ -21,7 +21,7 @@ export interface IncomingFilters {
   state: DeliveryState | '';
   /** Warehouse ids; empty means all destinations. */
   destinations: number[];
-  /** Work-order program values ("Program line"); empty means all. */
+  /** Work-order program values ("Program"); empty means all. */
   programs: string[];
 }
 

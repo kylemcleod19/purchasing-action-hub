@@ -97,6 +97,8 @@ export interface DeliveryRow extends DeliveryFacts {
   arrivalUpdatedAt: string | null;
   /** Latest substantive supplier confirmation; outgoing requests never set it. */
   lastSupplierConfirmationAt: string | null;
+  /** Latest recorded expected-arrival change (its own, else its split parent's); explains "moved later". */
+  lastEstimateChange: { from: string | null; to: string | null; at: string } | null;
   shipment: ShipmentInfo | null;
   risk: PhysicalRisk;
   issue: OpenIssue | null;
@@ -108,7 +110,7 @@ export interface DeliveryRow extends DeliveryFacts {
 
 export interface FilterOptions {
   destinations: { id: number; name: string }[];
-  /** Existing work-order program values, displayed as "Program line". */
+  /** Existing work-order program values, displayed as "Program". */
   programs: string[];
 }
 

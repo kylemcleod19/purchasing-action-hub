@@ -108,6 +108,13 @@ describe('seed', () => {
     expect(rows.every((r) => r.requiredDock && r.requiredDock <= r.productionStart)).toBe(true);
   });
 
+  it('explains a moved-later review on an on-time delivery with its previous and current estimate (PO-24111)', async () => {
+    const row = (await ctx.incoming()).rows.find((r) => r.poNumber === 'PO-24111')!;
+    expect(row.risk.reasons).toEqual([]);
+    expect(row.issue?.reasons).toEqual(['moved_later']);
+    expect(row.lastEstimateChange).toMatchObject({ from: D(1), to: D(2) });
+  });
+
   it('every row inherits its PO work order and production start', async () => {
     const { rows } = await ctx.incoming();
     const expected = new Map(

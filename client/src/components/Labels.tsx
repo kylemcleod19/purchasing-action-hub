@@ -12,8 +12,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** Tooltip text for the exact date comparisons behind a risk icon. */
 export function riskTitle(risk: PhysicalRisk, row: Pick<DeliveryRow, 'requiredDock' | 'productionStart'>): string {
   const parts: string[] = [];
-  if (risk.daysLate !== null) parts.push(`Late: ${plural(risk.daysLate, 'day')} after required dock date ${formatDate(row.requiredDock)}`);
-  if (risk.daysOverdue !== null) parts.push(`Overdue: expected ${plural(risk.daysOverdue, 'day')} ago, no receipt recorded`);
+  if (risk.daysLate !== null) parts.push(`After dock date: ${plural(risk.daysLate, 'day')} after required dock date ${formatDate(row.requiredDock)}`);
+  if (risk.daysOverdue !== null) parts.push(`Past expected arrival: expected ${plural(risk.daysOverdue, 'day')} ago, no receipt recorded`);
   if (risk.daysAfterStart !== null) {
     parts.push(`Production conflict: ${plural(risk.daysAfterStart, 'day')} after production start ${formatDate(row.productionStart)}`);
   }
@@ -77,7 +77,7 @@ export function ArrivalDate({ row, quantity, showTransit }: { row: ArrivalRow; q
 }
 
 /** Accessible label for one issue reason, with exact days when that risk is currently active. */
-export function reasonLabel(reason: IssueReason, row: Pick<DeliveryRow, 'risk' | 'requiredDock' | 'productionStart'>): string {
+export function reasonLabel(reason: IssueReason, row: Pick<DeliveryRow, 'risk' | 'requiredDock' | 'productionStart'> & Partial<Pick<DeliveryRow, 'lastEstimateChange'>>): string {
   const { risk } = row;
   const none = { daysLate: null, daysAfterStart: null, daysOverdue: null };
   if (reason === 'late' && risk.daysLate !== null) return riskTitle({ ...risk, ...none, daysLate: risk.daysLate }, row);
@@ -86,7 +86,12 @@ export function reasonLabel(reason: IssueReason, row: Pick<DeliveryRow, 'risk' |
   }
   if (reason === 'overdue' && risk.daysOverdue !== null) return riskTitle({ ...risk, ...none, daysOverdue: risk.daysOverdue }, row);
   if (reason === 'unknown') return 'Date unknown: no expected arrival';
-  if (reason === 'moved_later') return 'Estimate moved later than the previous expected arrival';
+  if (reason === 'moved_later') {
+    const c = row.lastEstimateChange;
+    return c && c.from && c.to && c.to > c.from
+      ? `Estimate moved later: ${formatDate(c.from)} → ${formatDate(c.to)}`
+      : 'Estimate moved later than the previous expected arrival';
+  }
   return `${REASON_LABELS[reason]} when the issue opened`;
 }
 

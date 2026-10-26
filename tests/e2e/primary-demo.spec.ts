@@ -75,10 +75,10 @@ test('primary demo: one Manage deliveries button per row, inline resolution, acc
   await chooseSource(page, 'Supplier email');
   await expect(modal(page).getByLabel('Note (optional)', { exact: true })).toHaveValue('');
   await modal(page).getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByText(/New issue opened: Production conflict, Late/)).toBeVisible();
+  await expect(page.getByText(/New issue opened: Production conflict, After dock date/)).toBeVisible();
   await expect(manageButton(demoRow)).toHaveAccessibleName('Manage deliveries, Needs action');
   await expect(manageButton(demoRow)).toHaveClass(/needs-action/);
-  await expect(demoRow.getByRole('img', { name: /^Late: 11 days after required dock date/ })).toHaveCount(1);
+  await expect(demoRow.getByRole('img', { name: /^After dock date: 11 days after required dock date/ })).toHaveCount(1);
   await expect(demoRow.getByRole('img', { name: /^Production conflict: 9 days after production start/ })).toHaveCount(1);
   await expect(demoRow.getByRole('img', { name: 'Supplier email' })).toBeVisible();
   await expect(demoRow).toHaveClass(/\brow-conflict\b/);
@@ -123,7 +123,7 @@ test('primary demo: one Manage deliveries button per row, inline resolution, acc
   await expect(entries).toHaveCount(2);
   await expect(entries.filter({ hasText: '(40)' })).toContainText(fmt(D(5)));
   await expect(entries.filter({ hasText: '(60)' })).toContainText(fmt(D(16)));
-  await expect(item.locator('.arrival-stack').getByRole('img', { name: /^Late:/ })).toHaveCount(1);
+  await expect(item.locator('.arrival-stack').getByRole('img', { name: /^After dock date:/ })).toHaveCount(1);
   await expect(manageButton(item)).toHaveAccessibleName('Manage deliveries');
   await expect(manageButton(item)).not.toHaveClass(/needs-action/);
   const deliveries = trackingRows(page);
@@ -145,20 +145,22 @@ test('primary demo: one Manage deliveries button per row, inline resolution, acc
   await expect(manageButton(item)).toHaveClass(/needs-action/);
   const lastUpdate = await row60.locator('.last-update').getAttribute('title');
 
-  // Accept current dates resolves without touching dates or Last update.
+  // Accept current estimate resolves without touching dates or Last update; the issue shows previous → current.
   await manageButton(item).click();
   await expect(modal(page).locator('.selected-heading')).toContainText('60 EA');
   await expect(modal(page).locator('.issue-section')).toContainText('Needs action');
-  await modal(page).getByRole('button', { name: 'Accept current dates' }).click();
-  await expect(modal(page).getByLabel('Outcome')).toHaveValue('accepted_delay');
-  await modal(page).getByRole('button', { name: 'Accept dates and resolve' }).click();
-  await expect(page.getByText('Issue resolved: Accepted delay.')).toBeVisible();
+  await expect(modal(page).locator('.issue-section')).toContainText(`Estimate moved later: ${fmt(D(16))} → ${fmt(D(18))}`);
+  await modal(page).getByRole('button', { name: 'Accept current estimate', exact: true }).click();
+  // One outcome only: no selector, and Date restored is not offered here.
+  await expect(modal(page).getByLabel('Outcome')).toHaveCount(0);
+  await modal(page).getByRole('button', { name: 'Accept current estimate and resolve' }).click();
+  await expect(page.getByText('Issue resolved: Accepted current estimate.')).toBeVisible();
   await expect(manageButton(item)).not.toHaveClass(/needs-action/);
   await expect(row60).toContainText(fmt(D(18)));
   await expect(row60).toHaveClass(/\brow-conflict\b/);
   expect(await row60.locator('.last-update').getAttribute('title')).toBe(lastUpdate);
   await row60.getByRole('button', { name: /Details for delivery/ }).click();
-  await expect(page.locator('.deliveries-table .detail-table')).toContainText('Resolved: Accepted delay');
+  await expect(page.locator('.deliveries-table .detail-table')).toContainText('Resolved: Accepted current estimate');
 
   // 6. Complete a reminder: dates, Last update, and resolution unchanged.
   await page.getByRole('tab', { name: /Follow-ups/ }).click();
@@ -190,10 +192,10 @@ test('primary demo: one Manage deliveries button per row, inline resolution, acc
   await expect(page.getByLabel('Search PO, part, or supplier')).toHaveValue('PO-DEMO-01');
   await page.getByRole('button', { name: /Needs action/ }).first().click();
   await expect(page.getByText('No deliveries need action with these filters.')).toBeVisible();
-  await page.getByRole('button', { name: /^Late/ }).click();
+  await page.getByRole('button', { name: /^After dock date/ }).click();
   await expect(incomingRows(page)).toHaveCount(1);
   await page.reload();
-  await expect(page.getByRole('button', { name: /^Late/ })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: /^After dock date/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(incomingRows(page)).toHaveCount(1);
 });
 
@@ -275,7 +277,7 @@ test('modal selection, hidden sibling issues, read-only received rows, and dirty
   await unknownChild.getByRole('radio').click();
   await expect(unknownChild.getByRole('radio')).toBeChecked();
   await expect(modal(page).getByRole('button', { name: 'Reviewed / no further action' })).toBeVisible();
-  await expect(modal(page).getByRole('button', { name: 'Accept current dates' })).toHaveCount(0);
+  await expect(modal(page).getByRole('button', { name: 'Accept current estimate', exact: true })).toHaveCount(0);
   // Cancel closes without saving and returns focus to the item's button.
   await modal(page).getByRole('button', { name: 'Cancel' }).click();
   await expect(modal(page)).toHaveCount(0);
@@ -297,7 +299,7 @@ test('modal selection, hidden sibling issues, read-only received rows, and dirty
   await expect(manageButton(received)).toHaveAccessibleName('View deliveries');
   await manageButton(received).click();
   await expect(modal(page)).toContainText('Received deliveries are read-only');
-  await expect(modal(page).getByRole('button', { name: /Update arrival|Split delivery|Accept current dates/ })).toHaveCount(0);
+  await expect(modal(page).getByRole('button', { name: /Update arrival|Split delivery|Accept current estimate/ })).toHaveCount(0);
 });
 
 test('tracking from the normal seed, destination/program filters, and URL round-trip', async ({ page }) => {
@@ -323,7 +325,7 @@ test('tracking from the normal seed, destination/program filters, and URL round-
   await page.goto(`/purchase-orders/${untracked.poId}`);
   await expect(trackingRows(page).first()).toContainText('Tracking unavailable');
 
-  // Destination and Program line: OR within, AND across, counts follow the other filters, URL keeps it.
+  // Destination and Program: OR within, AND across, counts follow the other filters, URL keeps it.
   await page.goto('/?view=outstanding');
   const allCount = await incomingRows(page).count();
   await page.getByRole('button', { name: /^Destination: All/ }).click();
@@ -338,25 +340,25 @@ test('tracking from the normal seed, destination/program filters, and URL round-
   expect(southCount).toBeGreaterThan(0);
   expect(southCount).toBeLessThan(allCount);
   await expect(page.getByRole('button', { name: /All outstanding/ }).locator('.count')).toHaveText(String(southCount));
-  await page.getByRole('button', { name: /^Program line: All/ }).click();
-  const programs = page.getByRole('group', { name: 'Program line' });
-  await programs.getByLabel('Search program line').fill('Program');
+  await page.getByRole('button', { name: /^Program: All/ }).click();
+  const programs = page.getByRole('group', { name: 'Program' });
+  await programs.getByLabel('Search program').fill('Program');
   const boxes = programs.getByRole('checkbox');
   await boxes.nth(0).click();
   await expect(boxes.nth(0)).toBeChecked();
   await boxes.nth(1).click();
   await expect(boxes.nth(1)).toBeChecked();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('button', { name: /^Program line: 2 selected/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Program: 2 selected/ })).toBeVisible();
   expect(new URL(page.url()).searchParams.getAll('program')).toHaveLength(2);
   const narrowed = await incomingRows(page).count();
   expect(narrowed).toBeLessThanOrEqual(southCount);
   await page.reload();
-  await expect(page.getByRole('button', { name: /^Program line: 2 selected/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Program: 2 selected/ })).toBeVisible();
   await expect(incomingRows(page)).toHaveCount(narrowed);
   // Unknown values in a stale link are ignored rather than mapped to something else.
   await page.goto('/?view=outstanding&program=Program%20Nowhere');
-  await expect(page.getByRole('button', { name: /^Program line: All/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Program: All/ })).toBeVisible();
   await expect(incomingRows(page)).toHaveCount(allCount);
   await page.getByLabel('Search PO, part, or supplier').fill('zzz-no-match');
   await expect(page.getByText('No deliveries match these filters.')).toBeVisible();
@@ -366,8 +368,8 @@ test('tracking from the normal seed, destination/program filters, and URL round-
   // Overdue but before its dock date: clock icon only, no late warning or tint. Late-only: light tint.
   await page.getByLabel('Search PO, part, or supplier').fill('PO-24110');
   const overdueRow = incomingRows(page).first();
-  await expect(overdueRow.getByRole('img', { name: /^Overdue: expected \d+ days? ago/ })).toHaveCount(1);
-  await expect(overdueRow.getByRole('img', { name: /^Late:/ })).toHaveCount(0);
+  await expect(overdueRow.getByRole('img', { name: /^Past expected arrival: expected \d+ days? ago/ })).toHaveCount(1);
+  await expect(overdueRow.getByRole('img', { name: /^After dock date:/ })).toHaveCount(0);
   await expect(overdueRow).not.toHaveClass(/\brow-(late|conflict)\b/);
   await page.getByLabel('Search PO, part, or supplier').fill('PO-24108');
   await expect(incomingRows(page).first()).toHaveClass(/\brow-late\b/);
@@ -420,7 +422,7 @@ test('supplier scenario: purpose and next action up front, read-only emails, pro
   await primary.click();
   await expect(toolbar.getByRole('status')).toContainText('for 8 items');
   await expect(current).toContainText('Process partial reply');
-  await expect(primary).toHaveText('Process supplier reply');
+  await expect(primary).toHaveText('Simulate supplier reply');
   await expect(toolbar.getByRole('button', { name: 'View sent email' })).toBeVisible();
   await expect(items.first()).toContainText('No reply');
 
@@ -463,7 +465,7 @@ test('supplier scenario: purpose and next action up front, read-only emails, pro
   await expect(toolbar.getByRole('status')).toContainText('1 call tasks created');
   await expect(page.locator('.supplier-items').getByRole('link', { name: /^Call task #\d+$/ })).toHaveCount(2);
   await expect(toolbar.getByRole('link', { name: /Call task #\d+ · Open/ })).toBeVisible();
-  await expect(primary).toHaveText('Process clarification email');
+  await expect(primary).toHaveText('Simulate clarification reply');
   await primary.click();
   await expect(toolbar.getByRole('status')).toContainText('2 updated');
   await expect(toolbar).toContainText('All steps complete');
@@ -474,7 +476,7 @@ test('supplier scenario: purpose and next action up front, read-only emails, pro
 
   // The past-date confirmation stays available under Additional test cases.
   await page.getByText('Additional test cases').click();
-  await page.getByRole('button', { name: 'Process past-date confirmation' }).click();
+  await page.getByRole('button', { name: 'Simulate past-date confirmation' }).click();
   await expect(toolbar.getByRole('status')).toContainText('1 updated');
 
   // The PO shows the same correspondence, with the email in the panel.
@@ -496,10 +498,12 @@ test('carrier scenario: delay reaches linked rows only; carrier Delivered stays 
   const toolbar = page.locator('.scenario-toolbar');
   const primary = toolbar.locator('button.primary');
   const status = toolbar.getByRole('status');
-  await expect(primary).toHaveText(`Apply carrier delay (ETA ${fmt(D(6))})`);
+  await expect(primary).toHaveText(`Simulate carrier delay (ETA ${fmt(D(6))})`);
   await expect(primary).toBeInViewport();
   await expect(page.locator('.carrier-context')).toContainText('DEMO-TRACK-001');
-  const received = await page.getByTestId('warehouse-received').innerText();
+  await expect(page.getByTestId('warehouse-receipt')).toHaveText('Not yet delivered by carrier');
+  // No totals that add different parts together.
+  await expect(page.locator('.scenario-results')).not.toContainText(/of \d+ ordered|\d+ units, open issues/);
 
   const rows = page.locator('.carrier-items tbody tr');
   const shipped = rows.filter({ hasText: 'SH-DEMO-01' });
@@ -510,33 +514,36 @@ test('carrier scenario: delay reaches linked rows only; carrier Delivered stays 
   await primary.click();
   await expect(status).toContainText('3 deliveries updated');
   for (const row of await shipped.all()) {
-    await expect(row.locator('td').nth(3)).toHaveText(fmt(D(1)));
-    await expect(row.locator('td').nth(4)).toContainText(fmt(D(6)));
+    await expect(row.locator('td').nth(3)).toHaveText('0'); // received, per row
+    await expect(row.locator('td').nth(4)).toHaveText(fmt(D(1)));
+    await expect(row.locator('td').nth(5)).toContainText(fmt(D(6)));
   }
   await expect(remainder.locator('td').nth(3)).toHaveText('—');
-  await expect(remainder.locator('td').nth(4)).toContainText(fmt(D(2)));
-  await expect(page.getByTestId('carrier-summary')).toContainText('open issues 3');
+  await expect(remainder.locator('td').nth(4)).toHaveText('—');
+  await expect(remainder.locator('td').nth(5)).toContainText(fmt(D(2)));
+  await expect(page.getByTestId('carrier-summary')).toContainText('Open issues 3');
 
-  await expect(primary).toHaveText(`Apply further delay (ETA ${fmt(D(8))})`);
+  await expect(primary).toHaveText(`Simulate further delay (ETA ${fmt(D(8))})`);
   await primary.click();
   await expect(status).toContainText('3 deliveries updated');
   await expect(primary).toHaveText(/^Advance clock to /);
   await primary.click();
   await expect(status).toContainText('Demo clock is now');
-  await expect(primary).toHaveText('Record carrier delivery');
+  await expect(primary).toHaveText('Simulate carrier delivery');
   await primary.click();
   await expect(status).toContainText('applied');
   await expect(toolbar).toContainText('All steps complete');
   await expect(page.locator('.carrier-context')).toContainText('Delivered / receipt pending');
-  await expect(page.getByTestId('warehouse-received')).toHaveText(received);
-  await expect(shipped.first()).toContainText('Carrier: Delivered / receipt pending · Warehouse: Not received');
-  await expect(remainder.locator('td').nth(4)).toContainText(fmt(D(2)));
+  await expect(page.getByTestId('warehouse-receipt')).toHaveText('Warehouse receipt pending');
+  await expect(shipped.first()).toContainText('Carrier: Delivered / receipt pending');
+  for (const row of await shipped.all()) await expect(row.locator('td').nth(3)).toHaveText('0');
+  await expect(remainder.locator('td').nth(5)).toContainText(fmt(D(2)));
 
   // Secondary checks remain available out of the main walkthrough.
   await page.getByText('Additional test cases').click();
-  await page.getByRole('button', { name: 'Replay duplicate event' }).click();
+  await page.getByRole('button', { name: 'Simulate duplicate event' }).click();
   await expect(status).toContainText('Duplicate event ID; nothing changed.');
-  await page.getByRole('button', { name: 'Process older event' }).click();
+  await page.getByRole('button', { name: 'Simulate older event' }).click();
   await expect(status).toContainText('ignored');
   await page.getByText(/Carrier event log/).click();
   await expect(page.locator('.scenario-section').filter({ hasText: 'Carrier event log' })).toContainText('ignored');

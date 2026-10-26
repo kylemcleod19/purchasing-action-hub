@@ -434,9 +434,9 @@ function SupplierResults({ data, scenario, onMessage }: { data: ScenarioData; sc
               <th>PO / line</th>
               <th>Part</th>
               <th className="num">Qty</th>
-              <th>Previous arrival</th>
+              <th>{request ? 'Arrival when requested' : 'Current expected arrival'}</th>
               <th>Confirmed / revised arrival</th>
-              <th>Response status</th>
+              <th>Status</th>
               <th>Purchasing action</th>
             </tr>
           </thead>
@@ -542,8 +542,14 @@ function CarrierResults({ data, scenario }: { data: ScenarioData; scenario: Scen
     const change = history.filter((h) => h.deliveryId === id && h.eventType === 'arrival_updated').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
     return change ? ((change.before?.expectedArrival as string | null) ?? null) : undefined;
   };
-  const lines = details.flatMap((d) => d.lines).filter((l) => lineIds.has(l.id));
-  const shippedUnits = linked.reduce((s, r) => s + r.quantity, 0);
+  // Receipt is shown per row; quantities of different parts are never added together.
+  const receipt = !shipment
+    ? ''
+    : linked.every((r) => r.state === 'received')
+      ? 'Received'
+      : shipment.carrierDeliveredAt
+        ? 'Warehouse receipt pending'
+        : 'Not yet delivered by carrier';
   const remainder = rows.filter((r) => r.state === 'planned');
   const events = details.flatMap((d) => d.carrierEvents).filter((e, i, all) => e.shipmentId === shipment?.id && all.findIndex((x) => x.id === e.id) === i);
 
@@ -567,17 +573,14 @@ function CarrierResults({ data, scenario }: { data: ScenarioData; scenario: Scen
             <td>{formatDate(shipment.expectedArrival)}</td>
             <th scope="row">Carrier delivered</th>
             <td>{shipment.carrierDeliveredAt ? formatClock(shipment.carrierDeliveredAt) : '—'}</td>
-            <th scope="row">Warehouse received</th>
-            <td data-testid="warehouse-received">
-              {lines.reduce((s, l) => s + l.receivedQty, 0)} of {lines.reduce((s, l) => s + l.orderedQty, 0)} ordered
-            </td>
+            <th scope="row">Warehouse receipt</th>
+            <td data-testid="warehouse-receipt">{receipt}</td>
           </tr>
         </tbody>
       </table>
       <p className="result-summary" data-testid="carrier-summary">
-        On shipment: {linked.length} deliveries, {shippedUnits} units, open issues {linked.filter((r) => r.issue).length}
-        {remainder.length > 0 &&
-          ` · Not shipped: ${remainder.reduce((s, r) => s + r.quantity, 0)} units, expected ${remainder.map((r) => formatDate(r.expectedArrival)).join(', ')}`}
+        Linked deliveries {linked.length} · Open issues {linked.filter((r) => r.issue).length}
+        {remainder.map((r) => ` · Not shipped: ${r.poNumber} line ${r.lineNo}, ${r.quantity} ${r.unit}, expected ${formatDate(r.expectedArrival)}`).join('')}
       </p>
       <table className="data-table carrier-items">
         <thead>
@@ -585,6 +588,7 @@ function CarrierResults({ data, scenario }: { data: ScenarioData; scenario: Scen
             <th>PO / line</th>
             <th className="num">Qty</th>
             <th>Shipment / state</th>
+            <th className="num">Received</th>
             <th>Previous arrival</th>
             <th>Current arrival</th>
             <th>Dock date</th>
@@ -606,12 +610,13 @@ function CarrierResults({ data, scenario }: { data: ScenarioData; scenario: Scen
                 <td>
                   {onShipment ? (
                     <>
-                      {shipment.number} · Carrier: {CARRIER_STATUS_LABELS[shipment.carrierStatus]} · Warehouse: {r.state === 'received' ? 'Received' : 'Not received'}
+                      {shipment.number} · Carrier: {CARRIER_STATUS_LABELS[shipment.carrierStatus]}
                     </>
                   ) : (
                     'Not shipped (no shipment)'
                   )}
                 </td>
+                <td className="num">{onShipment ? (r.state === 'received' ? r.quantity : 0) : '—'}</td>
                 <td className="nowrap">{prev === undefined ? '—' : formatDate(prev)}</td>
                 <td>
                   <ArrivalDate row={r} />
