@@ -1,26 +1,20 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiRequestError } from '../api';
 import { useDemo } from '../demo';
 import { arrivalDate, itemRank, prioritizeArrivals } from '../../../shared/arrivals';
 import { formatDate } from '../../../shared/dates';
-import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS, EVENT_LABELS, REASON_LABELS, sourceLabel } from '../../../shared/labels';
-import {
-  DELIVERY_STATES,
-  type DeliveryRow,
-  type DeliveryState,
-  type FollowUp,
-  type HistoryEntry,
-  type IssueReason,
-  type PoLineDetail,
-  type PurchaseOrderDetail,
-} from '../../../shared/types';
-import { ArrivalForm, ResolveForm, SplitForm, type SaveResult } from '../components/DeliveryForms';
+import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS } from '../../../shared/labels';
+import { DELIVERY_STATES, type CallTaskView, type DeliveryRow, type DeliveryState, type FollowUp, type PoLineDetail, type PurchaseOrderDetail } from '../../../shared/types';
+import { CallTasksTable, CorrespondenceList } from '../components/Correspondence';
+import type { SaveResult } from '../components/DeliveryForms';
+import { DeliveryTrackingTable } from '../components/DeliveryTrackingTable';
 import { CompleteFollowUpForm, FollowUpForm } from '../components/FollowUpForm';
-import { Icon } from '../components/Icons';
-import { ArrivalDate, DateText, Flash, IssueStatus, LastUpdate, ProductionStartDate, riskRowClass, StateLabel } from '../components/Labels';
+import { HistoryDisclosure } from '../components/HistoryDisclosure';
+import { ArrivalDate, DateText, Flash, FormErrors, riskRowClass } from '../components/Labels';
+import { ManageDeliveriesButton, ManageDeliveriesModal } from '../components/ManageDeliveries';
 import { Modal } from '../components/Modal';
-import { deliveryLabel, RowActions } from './IncomingPage';
+import { deliveryLabel } from './IncomingPage';
 
 type IssueFilter = 'all' | 'open' | 'resolved';
 const ISSUE_FILTERS: { key: IssueFilter; label: string }[] = [
@@ -29,44 +23,37 @@ const ISSUE_FILTERS: { key: IssueFilter; label: string }[] = [
   { key: 'resolved', label: 'Resolved issues' },
 ];
 
-type DeliveryAction = 'arrival' | 'split' | 'resolve';
-const ACTION_TITLES: Record<DeliveryAction, string> = {
-  arrival: 'Update expected arrival',
-  split: 'Split delivery',
-  resolve: 'Resolve issue',
-};
-
-/** Which deliveries an action can target. */
-const ELIGIBLE: Record<DeliveryAction, (d: DeliveryRow) => boolean> = {
-  arrival: (d) => d.state !== 'received',
-  split: (d) => d.state === 'planned',
-  resolve: (d) => d.issue !== null,
-};
-
 type ModalState =
-  // `choices` is set when an item-level action applies to several deliveries.
-  | { kind: DeliveryAction; delivery: DeliveryRow; choices?: DeliveryRow[] }
+  | { kind: 'manage'; line: PoLineDetail }
   | { kind: 'addFollowUp'; deliveryId: number | null }
-  | { kind: 'editFollowUp' | 'completeFollowUp'; followUp: FollowUp };
+  | { kind: 'editFollowUp' | 'completeFollowUp'; followUp: FollowUp }
+  | { kind: 'completeCallTask'; task: CallTaskView };
 
 const ITEM_COLUMNS = 11;
 const MAX_ARRIVALS = 2;
 
+/** Back link target: the Incoming items URL (with its filters) the user came from. */
+function backSearch(from: string | null): string {
+  return from && from.startsWith('?') ? from : '';
+}
+
 export function PurchaseOrderPage() {
   const { id } = useParams();
-  const { resetCount } = useDemo();
+  const { dataVersion } = useDemo();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') === 'follow-ups' ? 'follow-ups' : 'deliveries';
   const stateParam = searchParams.get('state');
   const stateFilter = DELIVERY_STATES.includes(stateParam as DeliveryState) ? (stateParam as DeliveryState) : null;
   const issueParam = searchParams.get('issues');
   const issueFilter: IssueFilter = issueParam === 'open' || issueParam === 'resolved' ? issueParam : 'all';
+  const from = backSearch(searchParams.get('from'));
   const [data, setData] = useState<PurchaseOrderDetail | null>(null);
   const [loadError, setLoadError] = useState<{ status: number; message: string } | null>(null);
   const [expanded, setExpanded] = useState<Set<number> | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [correspondenceOpen, setCorrespondenceOpen] = useState(false);
   const [modal, setModal] = useState<ModalState | null>(null);
   const [flash, setFlash] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
-  const [focusLine, setFocusLine] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -88,19 +75,15 @@ export function PurchaseOrderPage() {
   }, [id]);
 
   useEffect(() => {
+    // A different PO starts with its own expansion and collapsed disclosures.
     setExpanded(null);
+    setHistoryOpen(false);
+    setCorrespondenceOpen(false);
   }, [id]);
 
   useEffect(() => {
     load();
-  }, [load, resetCount]);
-
-  // Return focus to the item's expand button after a save so keyboard users keep their place.
-  useEffect(() => {
-    if (focusLine === null || !data) return;
-    document.querySelector<HTMLButtonElement>(`[data-item-expander="${focusLine}"]`)?.focus();
-    setFocusLine(null);
-  }, [data, focusLine]);
+  }, [load, dataVersion]);
 
   const matches = useCallback(
     (d: DeliveryRow) =>
@@ -115,7 +98,6 @@ export function PurchaseOrderPage() {
     const line = next?.lines.find((l) => l.id === lineId);
     const hidden = lineId !== null && line && !line.deliveries.some(matches);
     setFlash({ kind: 'success', text: hidden ? `${result.message} The item no longer matches the current filters.` : result.message });
-    if (lineId !== null && !hidden) setFocusLine(lineId);
   }
 
   const setParam = (key: string, value: string | null) =>
@@ -137,6 +119,16 @@ export function PurchaseOrderPage() {
       return next;
     });
 
+  async function startCallTask(task: CallTaskView) {
+    try {
+      await api(`/call-tasks/${task.id}`, { method: 'PATCH', body: { action: 'start', version: task.version } });
+      await load();
+      setFlash({ kind: 'success', text: `Call task #${task.id} started.` });
+    } catch (err) {
+      setFlash({ kind: 'error', text: err instanceof ApiRequestError ? err.message : 'Could not start the call task.' });
+    }
+  }
+
   if (loadError) {
     return (
       <section>
@@ -148,27 +140,26 @@ export function PurchaseOrderPage() {
             </button>
           )}
         </p>
-        <Link to="/">Back to Incoming items</Link>
+        <Link to={{ pathname: '/', search: from }}>Back to Incoming items</Link>
       </section>
     );
   }
   if (!data) return <p className="empty">Loading purchase order…</p>;
 
-  const { po, lines, followUps, history, demoDate } = data;
+  const { po, lines, followUps, history, demoDate, correspondence, callTasks, carrierEvents } = data;
   const allDeliveries = lines.flatMap((l) => l.deliveries);
   const openFollowUps = followUps.filter((f) => f.state === 'open');
   const dueFollowUps = openFollowUps.filter((f) => f.isDue);
-  const lineOf = (deliveryId: number) => lines.find((l) => l.deliveries.some((d) => d.deliveryId === deliveryId))?.id ?? null;
+  const openCallTasks = callTasks.filter((t) => t.state === 'open' || t.state === 'in_progress');
   const visibleLines = lines
     .map((line) => ({ line, matching: line.deliveries.filter(matches) }))
     .filter(({ matching }) => matching.length > 0)
     .sort((a, b) => itemRank(a.line.deliveries) - itemRank(b.line.deliveries) || a.line.lineNo - b.line.lineNo);
-  const openAction = (kind: DeliveryAction, delivery: DeliveryRow, choices?: DeliveryRow[]) => setModal({ kind, delivery, choices });
 
   return (
     <section>
       <p className="breadcrumb">
-        <Link to="/">← Incoming items</Link>
+        <Link to={{ pathname: '/', search: from }}>← Incoming items</Link>
       </p>
       <div className="po-header">
         <div>
@@ -220,6 +211,11 @@ export function PurchaseOrderPage() {
         >
           Follow-ups <span className="count">{openFollowUps.length} open</span>
           {dueFollowUps.length > 0 && <span className="count due">{dueFollowUps.length} due</span>}
+          {openCallTasks.length > 0 && (
+            <span className="count due">
+              {openCallTasks.length} call task{openCallTasks.length === 1 ? '' : 's'}
+            </span>
+          )}
         </button>
       </div>
 
@@ -302,7 +298,7 @@ export function PurchaseOrderPage() {
                                 data-item-expander={line.id}
                                 aria-expanded={open}
                                 aria-controls={`item-${line.id}-deliveries`}
-                                aria-label={`Deliveries for line ${line.lineNo} ${line.partNumber}`}
+                                aria-label={`Delivery schedule and tracking for line ${line.lineNo} ${line.partNumber}`}
                                 onClick={() => toggleItem(line.id)}
                               >
                                 {open ? '▾' : '▸'}
@@ -322,13 +318,19 @@ export function PurchaseOrderPage() {
                               <ArrivalsStack line={line} matching={matching} expanded={open} onMore={() => toggleItem(line.id, true)} />
                             </td>
                             <td>
-                              <ItemAction line={line} onAction={openAction} />
+                              {/* Open issues across all of the item's deliveries, even ones the filters hide. */}
+                              <ManageDeliveriesButton
+                                openIssueCount={line.openIssueCount}
+                                readOnly={line.deliveries.every((d) => d.state === 'received')}
+                                focusKey={`item-${line.id}`}
+                                onClick={() => setModal({ kind: 'manage', line })}
+                              />
                             </td>
                           </tr>
                           {open && (
                             <tr className="detail-row" id={`item-${line.id}-deliveries`}>
                               <td colSpan={ITEM_COLUMNS}>
-                                <DeliveriesTable deliveries={prioritizeArrivals(matching)} onAction={openAction} />
+                                <DeliveryTrackingTable deliveries={prioritizeArrivals(matching)} carrierEvents={carrierEvents} />
                               </td>
                             </tr>
                           )}
@@ -341,41 +343,53 @@ export function PurchaseOrderPage() {
             </>
           )}
           <p className="hint footnote">{DATE_RULES_NOTE}</p>
-          <HistoryTable history={history} />
+          {correspondence.length > 0 && (
+            <div className="history">
+              <h2>
+                <button
+                  type="button"
+                  className="disclosure"
+                  aria-expanded={correspondenceOpen}
+                  aria-controls="po-correspondence"
+                  onClick={() => setCorrespondenceOpen((o) => !o)}
+                >
+                  {correspondenceOpen ? '▾' : '▸'} Supplier correspondence ({correspondence.length})
+                </button>
+              </h2>
+              {correspondenceOpen && (
+                <div id="po-correspondence">
+                  <CorrespondenceList requests={correspondence} />
+                </div>
+              )}
+            </div>
+          )}
+          <HistoryDisclosure history={history} expanded={historyOpen} onToggle={() => setHistoryOpen((o) => !o)} />
         </>
       )}
 
       {tab === 'follow-ups' && (
-        <FollowUpsTab
-          followUps={followUps}
-          onAdd={() => setModal({ kind: 'addFollowUp', deliveryId: null })}
-          onEdit={(f) => setModal({ kind: 'editFollowUp', followUp: f })}
-          onComplete={(f) => setModal({ kind: 'completeFollowUp', followUp: f })}
-        />
+        <>
+          <CallTasksTable
+            tasks={callTasks}
+            onStart={startCallTask}
+            onComplete={(task) => setModal({ kind: 'completeCallTask', task })}
+          />
+          <FollowUpsTab
+            followUps={followUps}
+            onAdd={() => setModal({ kind: 'addFollowUp', deliveryId: null })}
+            onEdit={(f) => setModal({ kind: 'editFollowUp', followUp: f })}
+            onComplete={(f) => setModal({ kind: 'completeFollowUp', followUp: f })}
+          />
+        </>
       )}
 
-      {(modal?.kind === 'arrival' || modal?.kind === 'split' || modal?.kind === 'resolve') && (
-        <Modal title={ACTION_TITLES[modal.kind]} onClose={() => setModal(null)} wide={modal.kind === 'split'}>
-          {modal.choices && modal.choices.length > 1 && (
-            <DeliveryPicker
-              choices={modal.choices}
-              value={modal.delivery.deliveryId}
-              onChange={(delivery) => setModal({ ...modal, delivery })}
-            />
-          )}
-          {(() => {
-            // Keyed by delivery so switching the selection starts a fresh form.
-            const key = modal.delivery.deliveryId;
-            const props = {
-              delivery: modal.delivery,
-              onCancel: () => setModal(null),
-              onSaved: (r: SaveResult) => saved(r, lineOf(modal.delivery.deliveryId)),
-            };
-            if (modal.kind === 'arrival') return <ArrivalForm key={key} {...props} />;
-            if (modal.kind === 'split') return <SplitForm key={key} {...props} />;
-            return <ResolveForm key={key} {...props} />;
-          })()}
-        </Modal>
+      {modal?.kind === 'manage' && (
+        <ManageDeliveriesModal
+          poId={po.id}
+          poLineId={modal.line.id}
+          onClose={() => setModal(null)}
+          onSaved={(r) => saved(r, modal.line.id)}
+        />
       )}
       {(modal?.kind === 'addFollowUp' || modal?.kind === 'editFollowUp') && (
         <Modal title={modal.kind === 'addFollowUp' ? 'Add reminder' : 'Edit reminder'} onClose={() => setModal(null)}>
@@ -394,6 +408,11 @@ export function PurchaseOrderPage() {
       {modal?.kind === 'completeFollowUp' && (
         <Modal title="Complete reminder" onClose={() => setModal(null)}>
           <CompleteFollowUpForm followUp={modal.followUp} onCancel={() => setModal(null)} onSaved={() => saved({ message: 'Reminder completed.' }, null)} />
+        </Modal>
+      )}
+      {modal?.kind === 'completeCallTask' && (
+        <Modal title="Complete call task" onClose={() => setModal(null)}>
+          <CompleteCallTaskForm task={modal.task} onCancel={() => setModal(null)} onSaved={() => saved({ message: 'Call task completed.' }, null)} />
         </Modal>
       )}
     </section>
@@ -425,104 +444,43 @@ function ArrivalsStack({ line, matching, expanded, onMore }: { line: PoLineDetai
   );
 }
 
-/**
- * Item-level actions, always on the row. Each appears when at least one delivery qualifies; with
- * several candidates the form opens with a delivery selector, defaulting to the most urgent one.
- * The open-issue count also covers deliveries hidden from the Arrivals stack.
- */
-function ItemAction({ line, onAction }: { line: PoLineDetail; onAction: (kind: DeliveryAction, d: DeliveryRow, choices?: DeliveryRow[]) => void }) {
-  const ordered = prioritizeArrivals(line.deliveries);
-  const candidates = (kind: DeliveryAction) => ordered.filter(ELIGIBLE[kind]);
-  const button = (kind: DeliveryAction, label: string, className = 'small') => {
-    const choices = candidates(kind);
-    if (choices.length === 0) return null;
-    return (
-      <button type="button" className={className} onClick={() => onAction(kind, choices[0], choices)}>
-        {label}
-      </button>
-    );
-  };
-  const issues = line.openIssueCount;
+/** Completing a call task records the phone follow-up. It never resolves delivery issues. */
+function CompleteCallTaskForm({ task, onSaved, onCancel }: { task: CallTaskView; onSaved: () => void; onCancel: () => void }) {
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api(`/call-tasks/${task.id}`, { method: 'PATCH', body: { action: 'complete', version: task.version, note } });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Save failed.');
+      setSaving(false);
+    }
+  }
   return (
-    <div className="item-action">
-      {issues > 0 && (
-        <span className="issue-count" title={`${issues} open issue${issues === 1 ? '' : 's'}`}>
-          <Icon name="flag" label={`${issues} open issue${issues === 1 ? '' : 's'}`} /> {issues}
-        </span>
-      )}
-      {button('resolve', 'Resolve', 'primary small')}
-      {button('arrival', 'Update arrival')}
-      {button('split', 'Split')}
-      {candidates('arrival').length === 0 && <span className="hint">Read-only</span>}
-    </div>
-  );
-}
-
-function DeliveryPicker({ choices, value, onChange }: { choices: DeliveryRow[]; value: number; onChange: (d: DeliveryRow) => void }) {
-  return (
-    <div className="field delivery-picker">
-      <label htmlFor="delivery-picker">Delivery</label>
-      <select id="delivery-picker" value={value} onChange={(e) => onChange(choices.find((d) => d.deliveryId === Number(e.target.value))!)}>
-        {choices.map((d) => (
-          <option key={d.deliveryId} value={d.deliveryId}>
-            {`#${d.deliveryId} · ${d.quantity} ${d.unit} · ${DELIVERY_STATE_LABELS[d.state]} · ${d.expectedArrival ? formatDate(d.expectedArrival) : 'Date unknown'}${d.issue ? ' · open issue' : ''}`}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function DeliveriesTable({ deliveries, onAction }: { deliveries: DeliveryRow[]; onAction: (kind: 'arrival' | 'split' | 'resolve', d: DeliveryRow) => void }) {
-  return (
-    <table className="compact deliveries-table">
-      <thead>
-        <tr>
-          <th>Delivery</th>
-          <th className="num">Quantity</th>
-          <th>State</th>
-          <th>Required dock</th>
-          <th>Expected / received arrival</th>
-          <th>Production start</th>
-          <th>Last update</th>
-          <th>Issue</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {deliveries.map((d) => (
-          <tr
-            key={d.deliveryId}
-            data-delivery-id={d.deliveryId}
-            className={[d.issue && 'has-issue', riskRowClass([d])].filter(Boolean).join(' ') || undefined}
-          >
-            <td>#{d.deliveryId}</td>
-            <td className="num">{d.quantity}</td>
-            <td className="nowrap">
-              <StateLabel state={d.state} />
-            </td>
-            <td>
-              <DateText date={d.requiredDock} />
-            </td>
-            <td>
-              <ArrivalDate row={d} showTransit />
-            </td>
-            <td>
-              <ProductionStartDate row={d} />
-            </td>
-            <td>
-              <LastUpdate at={d.arrivalUpdatedAt} source={d.source} />
-            </td>
-            <td className="nowrap">
-              <IssueStatus row={d} />
-            </td>
-            <td>
-              <RowActions row={d} onAction={(kind) => onAction(kind, d)} />
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <form onSubmit={submit} className="form">
+      <p className="hint">
+        Record arrival changes from the call with Manage deliveries. Completing this task does not change dates or resolve delivery issues.
+      </p>
+      <FormErrors error={error} fields={{}} />
+      <div className="field">
+        <label htmlFor="call-note">Call note (optional)</label>
+        <textarea id="call-note" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
+      </div>
+      <div className="form-actions">
+        <button type="button" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button type="submit" className="primary" disabled={saving}>
+          {saving ? 'Saving…' : 'Complete call task'}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -586,81 +544,6 @@ function FollowUpsTab({
                       </>
                     )}
                   </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const dateText = (value: unknown) => (typeof value === 'string' ? formatDate(value) : 'Unknown');
-const reasonsText = (value: unknown) => (Array.isArray(value) ? value.map((r) => REASON_LABELS[r as IssueReason] ?? r).join(', ') : '');
-
-/** Old → new values for a history row. */
-function describeChange(entry: HistoryEntry): string {
-  const before = entry.before ?? {};
-  const after = entry.after ?? {};
-  switch (entry.eventType) {
-    case 'arrival_updated':
-      return `${dateText(before.expectedArrival)} → ${dateText(after.expectedArrival)}`;
-    case 'delivery_split': {
-      const parts = (after.deliveries as { id: number; quantity: number; expectedArrival: string | null }[]) ?? [];
-      return `${before.quantity} (${dateText(before.expectedArrival)}) → ${parts.map((p) => `#${p.id} ${p.quantity} (${dateText(p.expectedArrival)})`).join(', ')}`;
-    }
-    case 'issue_opened':
-      return `${reasonsText(after.reasons)}${before.previousIssue ? ` (reopens #${before.previousIssue})` : ''}${before.parentIssue ? ` (from split issue #${before.parentIssue})` : ''}`;
-    case 'issue_updated':
-      return `${reasonsText(before.reasons)} → ${reasonsText(after.reasons)}`;
-    case 'issue_resolved':
-      return `${String(after.outcome)} · arrival ${dateText(after.expectedArrival)}`;
-    case 'issue_superseded':
-      return `Issue #${before.issue} → split deliveries`;
-    case 'follow_up_added':
-      return `Due ${dateText(after.dueDate)}`;
-    case 'follow_up_edited':
-      return `Due ${dateText(before.dueDate)} → ${dateText(after.dueDate)}`;
-    case 'follow_up_completed':
-      return 'Open → Completed';
-    case 'follow_up_moved':
-      return `#${before.delivery} → Whole PO`;
-    default:
-      return '';
-  }
-}
-
-function HistoryTable({ history }: { history: HistoryEntry[] }) {
-  return (
-    <div className="history">
-      <h2>Change history</h2>
-      {history.length === 0 ? (
-        <p className="empty">No changes recorded yet.</p>
-      ) : (
-        <div className="table-scroll">
-          <table className="compact">
-            <thead>
-              <tr>
-                <th>When (your time)</th>
-                <th>Event</th>
-                <th>Delivery</th>
-                <th>Old → new</th>
-                <th title="The PO buyer is the demo actor; there is no login.">Actor</th>
-                <th>Source</th>
-                <th>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((h) => (
-                <tr key={h.id}>
-                  <td className="nowrap">{new Date(h.createdAt).toLocaleString()}</td>
-                  <td className="nowrap">{EVENT_LABELS[h.eventType] ?? h.eventType}</td>
-                  <td>{h.deliveryId !== null ? `#${h.deliveryId}` : 'PO'}</td>
-                  <td>{describeChange(h)}</td>
-                  <td className="nowrap">{h.actor ? `${h.actor} (demo)` : 'System'}</td>
-                  <td>{sourceLabel(h.source)}</td>
-                  <td>{h.note ?? '—'}</td>
                 </tr>
               ))}
             </tbody>

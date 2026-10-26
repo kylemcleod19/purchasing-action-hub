@@ -1,21 +1,45 @@
-// Deterministic synthetic dataset (PRD §9). All business dates are offsets from the demo date, so
-// scenarios stay valid whenever the database is reset. Fictional suppliers, parts, and programs.
-// Each PO belongs to exactly one work order; items and deliveries inherit it. Seeded history, issues,
-// and resolutions are recorded through the same mutation services the app uses, with backdated
-// timestamps, so they follow the real issue rules.
+// Deterministic synthetic dataset (PRD §9, §13, §14). All business dates are offsets from the demo
+// date, so scenarios stay valid whenever the database is reset. Fictional suppliers, parts, programs,
+// carriers, and tracking numbers. Each PO belongs to exactly one work order; items and deliveries
+// inherit it. Seeded history, issues, and resolutions are recorded through the same mutation services
+// the app uses, with backdated timestamps, so they follow the real issue rules.
+//
+// The two simulation scenarios (Case A supplier outreach, Case B carrier delay) are embedded in the
+// existing 25 POs / 80 items. Their baseline is installed here; their playback effects are not.
 import type { DB } from './db.js';
 import { addDays } from '../../shared/dates.js';
+import { DEFAULT_OUTREACH_SETTINGS } from '../../shared/outreach.js';
 import { resolveIssue, splitDelivery, updateArrival } from '../services/deliveries.js';
 import { getOpenIssue, reconcileIssues } from '../services/issues.js';
-import type { UpdateSource } from '../../shared/types.js';
+import type { DeliveryState, UpdateSource } from '../../shared/types.js';
 
-export const SEED_VERSION = '3';
+export const SEED_VERSION = '4';
+/** Version of the simulation fixtures installed by a reset (PRD §13). */
+export const FIXTURE_VERSION = '1';
 
 export const DEMO = {
   poNumber: 'PO-DEMO-01',
   partNumber: 'HX-2210',
   workOrder: 'WO-DEMO-A',
 } as const;
+
+/** Case A: partial supplier reply across a ten-line PO and a two-line PO from one specialist. */
+export const CASE_A = {
+  supplier: 'Kestrel Precision Machining',
+  poNumbers: ['PO-24105', 'PO-24116'],
+  workOrder: 'WO-30101',
+} as const;
+
+/** Case B: one carrier delay across three delivery rows on two POs, with an untouched remainder. */
+export const CASE_B = {
+  supplier: 'Granite Bearing Co.',
+  poNumbers: ['PO-24101', 'PO-24117'],
+  shipment: 'SH-DEMO-01',
+  carrier: 'Demo Freight',
+  tracking: 'DEMO-TRACK-001',
+} as const;
+
+const CARRIERS = ['Demo Freight', 'Sample Parcel Co.', 'Placeholder Logistics'];
 
 type Part = [partNumber: string, description: string];
 
@@ -149,6 +173,19 @@ function createRng(seed: number) {
  */
 type Category = 'healthy' | 'transit' | 'received' | 'late' | 'conflict' | 'unknown' | 'overdue' | 'carrier' | 'restored' | 'split' | 'accepted';
 
+/** An explicitly specified scenario delivery (Case A/B). Day values are offsets from the demo date. */
+interface FixedDelivery {
+  state: DeliveryState;
+  arrival: number | null;
+  received?: number;
+  updated: number;
+  source: UpdateSource | 'po_schedule';
+  /** Substantive supplier confirmation day, if any. */
+  confirmed?: number;
+  /** Reserved shipment key; other shipped records are grouped generically. */
+  shipment?: string;
+}
+
 interface WorkOrderSpec {
   number: string;
   program: string;
@@ -158,12 +195,15 @@ interface WorkOrderSpec {
 interface DeliverySpec {
   qty: number;
   category: Category;
+  fixed?: FixedDelivery;
 }
 interface LineSpec {
   part: Part;
   qty: number;
   dock: string;
   deliveries: DeliverySpec[];
+  /** Scenario lines are fully specified and skip random generation and events. */
+  scenario?: boolean;
 }
 interface PoSpec {
   number: string;
@@ -172,6 +212,8 @@ interface PoSpec {
   buyer: string;
   lines: LineSpec[];
   anchor?: Category | 'demo';
+  /** PO creation day; generic POs use their initial schedule day. */
+  created?: number;
 }
 
 // Single-line POs that pin the PRD's required examples to known records.
@@ -180,13 +222,23 @@ const ANCHORS: Record<number, Category | 'demo'> = {
   6: 'healthy', // timely arrival with a reminder due
   7: 'late', // after required dock, before production start
   8: 'unknown',
-  9: 'overdue',
+  9: 'overdue', // dispatched without a tracking number
   10: 'carrier',
   11: 'received',
   12: 'restored', // date-restored resolution
   13: 'split', // split agreed with one late child
   14: 'accepted', // accepted late delivery, ready to reopen with a worse date
 };
+
+// Scenario POs (PRD §13): suppliers 4 (Case A) and 0 (Case B) each hold a ten-line PO and a small PO.
+const CASE_A_PO = 4;
+const CASE_A_SMALL_PO = 15;
+const CASE_B_PO = 0;
+const CASE_B_SMALL_PO = 16;
+// Work orders: Case A's two POs share WO 0; Case B's POs use WOs 5 and 7 (both South warehouse).
+const CASE_A_WO = 0;
+const CASE_B_WO = 5;
+const CASE_B_SMALL_WO = 7;
 
 export function seedDatabase(db: DB, demoDate: string): void {
   const rng = createRng(20261026);
@@ -198,17 +250,28 @@ export function seedDatabase(db: DB, demoDate: string): void {
   for (let i = 0; i < 19; i++) {
     workOrders.push({ number: `WO-${30101 + i}`, program: rng.pick(PROGRAMS), warehouse: i % 2, start: D(rng.int(4, 45)) });
   }
+  workOrders[CASE_A_WO].start = D(5);
+  workOrders[CASE_B_WO].start = D(4);
+  workOrders[CASE_B_SMALL_WO].start = D(7);
   const demoWo = workOrders.push({ number: DEMO.workOrder, program: 'Program Atlas', warehouse: 0, start: D(7) }) - 1;
 
   // 25 POs: 5 with 10 lines (suppliers 0-4, full catalogs), 10 with 1 line, 10 with 2 lines.
-  // Suppliers 0-4 each also have one small PO; work orders 0-4 each have two POs.
-  const smallPoSuppliers = rng.shuffle([0, 1, 3, 4, ...Array.from({ length: 15 }, (_, i) => i + 5)]);
-  const workOrderSlots = rng.shuffle([...Array(19).keys(), 0, 1, 2, 3, 4]);
+  // Suppliers 0-4 each also have one small PO; five work orders have two POs.
+  const pinnedSupplier: Record<number, number> = { [CASE_A_SMALL_PO]: 4, [CASE_B_SMALL_PO]: 0 };
+  const pinnedWorkOrder: Record<number, number> = {
+    [CASE_A_PO]: CASE_A_WO,
+    [CASE_A_SMALL_PO]: CASE_A_WO,
+    [CASE_B_PO]: CASE_B_WO,
+    [CASE_B_SMALL_PO]: CASE_B_SMALL_WO,
+  };
+  const smallPoSuppliers = rng.shuffle([1, 3, ...Array.from({ length: 15 }, (_, i) => i + 5)]);
+  const freeWorkOrders = [...Array(19).keys()].filter((w) => ![CASE_A_WO, CASE_B_WO, CASE_B_SMALL_WO].includes(w));
+  const workOrderSlots = rng.shuffle([...freeWorkOrders, 1, 2, 3, 4]);
   const pos: PoSpec[] = [];
   for (let i = 0; i < 25; i++) {
     const anchor = ANCHORS[i];
-    const supplier = i < 5 ? i : anchor === 'demo' ? 2 : smallPoSuppliers.pop()!;
-    const workOrder = anchor === 'demo' ? demoWo : workOrderSlots.pop()!;
+    const supplier = i < 5 ? i : anchor === 'demo' ? 2 : (pinnedSupplier[i] ?? smallPoSuppliers.pop()!);
+    const workOrder = anchor === 'demo' ? demoWo : (pinnedWorkOrder[i] ?? workOrderSlots.pop()!);
     const start = workOrders[workOrder].start;
     const catalog = rng.shuffle([...SUPPLIERS[supplier].parts]);
     const lineCount = i < 5 ? 10 : i < 15 ? 1 : 2;
@@ -228,9 +291,56 @@ export function seedDatabase(db: DB, demoDate: string): void {
     });
   }
 
+  // The late anchor needs a dock date before production start to be late without a production conflict.
+  const lateAnchor = pos.find((p) => p.anchor === 'late')!;
+  lateAnchor.lines[0].dock = minDate(lateAnchor.lines[0].dock, addDays(workOrders[lateAnchor.workOrder].start, -2));
+
   // Primary demo: 100 units for WO-DEMO-A, required dock D+5, production start D+7, arrival D+5.
   const demoPo = pos.find((p) => p.anchor === 'demo')!;
   demoPo.lines[0] = { part: [DEMO.partNumber, 'Wire harness, sensor mast'], qty: 100, dock: D(5), deliveries: [{ qty: 100, category: 'healthy' }] };
+
+  const fixed = (qty: number, f: FixedDelivery): DeliverySpec => ({ qty, category: f.state === 'received' ? 'received' : 'healthy', fixed: f });
+  const scenarioLine = (line: LineSpec, qty: number, dock: string, deliveries: DeliverySpec[]) =>
+    Object.assign(line, { qty, dock, deliveries, scenario: true });
+
+  // Case A (PRD §13): PO creation D-20, required dock D+3, production start D+5 on both POs. Eight
+  // queried lines are not shipped, expected D+2, last confirmed D-7. The other four lines are
+  // excluded: two recent confirmations, one received, one with usable tracking.
+  const queried = (qty: number) => fixed(qty, { state: 'planned', arrival: 2, updated: -7, source: 'supplier_email', confirmed: -7 });
+  const caseA = pos[CASE_A_PO];
+  caseA.created = -20;
+  const caseAQty = [20, 16, 40, 12, 24, 16, 30, 18, 10, 14];
+  caseA.lines.forEach((line, i) => {
+    let delivery: DeliverySpec;
+    if (i < 6) delivery = queried(caseAQty[i]);
+    else if (i < 8) delivery = fixed(caseAQty[i], { state: 'planned', arrival: 2, updated: -1, source: 'supplier_email', confirmed: -1 });
+    else if (i === 8) delivery = fixed(caseAQty[i], { state: 'received', arrival: -3, received: -3, updated: -9, source: 'po_schedule' });
+    else delivery = fixed(caseAQty[i], { state: 'in_transit', arrival: 2, updated: -2, source: 'carrier_update' });
+    scenarioLine(line, caseAQty[i], D(3), [delivery]);
+  });
+  const caseASmall = pos[CASE_A_SMALL_PO];
+  caseASmall.created = -20;
+  scenarioLine(caseASmall.lines[0], 12, D(3), [queried(12)]);
+  scenarioLine(caseASmall.lines[1], 30, D(3), [queried(30)]);
+
+  // Case B (PRD §13): SH-DEMO-01 carries PO-C line 1's dispatched 30 of 50, PO-C line 2, and PO-D
+  // line 1. PO-C line 1's other 20 stay a separate not-shipped commitment. PO-C line 3 is shipped in
+  // two portions with two tracking numbers.
+  const onDemoShipment: FixedDelivery = { state: 'in_transit', arrival: 1, updated: -1, source: 'carrier_update', shipment: CASE_B.shipment };
+  const caseB = pos[CASE_B_PO];
+  caseB.created = -25;
+  scenarioLine(caseB.lines[0], 50, D(2), [
+    fixed(30, onDemoShipment),
+    fixed(20, { state: 'planned', arrival: 2, updated: -5, source: 'supplier_email', confirmed: -5 }),
+  ]);
+  scenarioLine(caseB.lines[1], 12, D(2), [fixed(12, onDemoShipment)]);
+  scenarioLine(caseB.lines[2], 24, D(3), [
+    fixed(10, { state: 'received', arrival: -4, received: -4, updated: -10, source: 'po_schedule' }),
+    fixed(14, { state: 'in_transit', arrival: 2, updated: -1, source: 'carrier_update' }),
+  ]);
+  const caseBSmall = pos[CASE_B_SMALL_PO];
+  caseBSmall.created = -25;
+  scenarioLine(caseBSmall.lines[0], 8, D(5), [fixed(8, onDemoShipment)]);
 
   const randomCategory = (): Category => {
     const r = rng.next();
@@ -244,6 +354,7 @@ export function seedDatabase(db: DB, demoDate: string): void {
   for (const po of pos) {
     if (po.anchor === 'demo') continue;
     for (const line of po.lines) {
+      if (line.scenario) continue;
       if (po.anchor) {
         line.deliveries = [{ qty: line.qty, category: po.anchor }];
       } else if (line.qty >= 12 && rng.next() < 0.2) {
@@ -267,40 +378,65 @@ export function seedDatabase(db: DB, demoDate: string): void {
   const insertWo = db.prepare('INSERT INTO work_orders (number, program, warehouse_id, production_start) VALUES (?, ?, ?, ?)');
   const woIds = workOrders.map((wo) => Number(insertWo.run(wo.number, wo.program, warehouseIds[wo.warehouse], wo.start).lastInsertRowid));
   const insertPo = db.prepare(
-    'INSERT INTO purchase_orders (number, supplier_id, warehouse_id, work_order_id, buyer, status) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO purchase_orders (number, supplier_id, warehouse_id, work_order_id, buyer, status, created_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
   );
   const insertLine = db.prepare(
     `INSERT INTO po_lines (po_id, line_no, part_number, description, unit, ordered_qty, required_dock_date)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertDelivery = db.prepare(
-    `INSERT INTO deliveries (po_line_id, quantity, state, expected_arrival, received_at, source, arrival_updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO deliveries (po_line_id, quantity, state, expected_arrival, received_at, source, arrival_updated_at, last_supplier_confirmation_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   /** Later arrival-information events, applied through the mutation services. */
   const events: { at: number; run: () => void }[] = [];
   const anchorDeliveries = new Map<Category | 'demo', { poId: number; deliveryId: number }>();
   const lateDeliveries: { poId: number; deliveryId: number }[] = [];
+  /** Deliveries reserved for named shipments, in insertion order. */
+  const reservedShipments = new Map<string, number[]>();
+  const reserve = (key: string, deliveryId: number) => reservedShipments.set(key, [...(reservedShipments.get(key) ?? []), deliveryId]);
 
   for (const po of pos) {
     const wo = workOrders[po.workOrder];
-    const categories = po.lines.flatMap((l) => l.deliveries.map((d) => d.category));
-    const status = categories.every((c) => c === 'received') ? 'Received' : categories.includes('received') ? 'Partially received' : 'Open';
-    const poId = Number(insertPo.run(po.number, supplierIds[po.supplier], warehouseIds[wo.warehouse], woIds[po.workOrder], po.buyer, status).lastInsertRowid);
-    const scheduledAt = ts(-rng.int(18, 40), rng.int(13, 22));
+    const received = po.lines.flatMap((l) => l.deliveries.map((d) => d.category === 'received'));
+    const status = received.every(Boolean) ? 'Received' : received.some(Boolean) ? 'Partially received' : 'Open';
+    const scheduledDay = po.created ?? -rng.int(18, 40);
+    const scheduledAt = ts(scheduledDay, rng.int(13, 22));
+    const poId = Number(
+      insertPo.run(po.number, supplierIds[po.supplier], warehouseIds[wo.warehouse], woIds[po.workOrder], po.buyer, status, D(scheduledDay))
+        .lastInsertRowid,
+    );
 
     po.lines.forEach((line, index) => {
       const lineId = Number(insertLine.run(poId, index + 1, line.part[0], line.part[1], 'EA', line.qty, line.dock).lastInsertRowid);
       const onTime = (maxLead: number) => maxDate(addDays(line.dock, -rng.int(0, maxLead)), D(1));
       for (const delivery of line.deliveries) {
+        const f = delivery.fixed;
+        if (f) {
+          const deliveryId = Number(
+            insertDelivery.run(
+              lineId,
+              delivery.qty,
+              f.state,
+              f.arrival === null ? null : D(f.arrival),
+              f.received === undefined ? null : D(f.received),
+              f.source,
+              ts(f.updated),
+              f.confirmed === undefined ? null : ts(f.confirmed),
+            ).lastInsertRowid,
+          );
+          if (f.shipment) reserve(f.shipment, deliveryId);
+          continue;
+        }
         const c = delivery.category;
-        let state: 'planned' | 'in_transit' | 'received' = 'planned';
+        let state: DeliveryState = 'planned';
         let arrival: string | null = onTime(6);
         if (po.anchor === 'demo') arrival = D(5);
         else if (c === 'received') {
           state = 'received';
-          arrival = D(-rng.int(2, 25));
+          // Received after the PO existed long enough to ship.
+          arrival = maxDate(D(-rng.int(2, 25)), D(scheduledDay + 6));
         } else if (c === 'transit') {
           state = 'in_transit';
           arrival = onTime(3);
@@ -308,14 +444,17 @@ export function seedDatabase(db: DB, demoDate: string): void {
           state = 'in_transit';
           arrival = minDate(onTime(3), D(3));
         } else if (c === 'overdue') {
-          state = rng.next() < 0.5 ? 'in_transit' : 'planned';
+          state = rng.next() < 0.5 || po.anchor === 'overdue' ? 'in_transit' : 'planned';
           arrival = D(-rng.int(1, 5));
         } else if (c === 'healthy') {
           state = arrival <= D(6) && rng.next() < 0.4 ? 'in_transit' : 'planned';
         }
         const deliveryId = Number(
-          insertDelivery.run(lineId, delivery.qty, state, arrival, state === 'received' ? arrival : null, 'po_schedule', scheduledAt).lastInsertRowid,
+          insertDelivery.run(lineId, delivery.qty, state, arrival, state === 'received' ? arrival : null, 'po_schedule', scheduledAt, null)
+            .lastInsertRowid,
         );
+        // The overdue anchor shipped, but the supplier has not provided a tracking number.
+        if (po.anchor === 'overdue') reserve(UNTRACKED, deliveryId);
         if (po.anchor) anchorDeliveries.set(po.anchor, { poId, deliveryId });
         scheduleEvents(c, { poId, deliveryId, dock: line.dock, start: wo.start, qty: delivery.qty, arrival, generic: !po.anchor });
       }
@@ -426,6 +565,8 @@ export function seedDatabase(db: DB, demoDate: string): void {
   // Exceptions with no recorded update (overdue against the original schedule) open issues once.
   reconcileIssues(db, demoDate, ts(-1, 7));
 
+  seedShipments(db, demoDate, reservedShipments);
+
   // Optional reminders: due, upcoming, PO-level, and completed. They never create or resolve issues.
   const insertFollowUp = db.prepare(
     `INSERT INTO follow_ups (po_id, delivery_id, due_date, note, state, completion_note, completed_at, created_at, updated_at)
@@ -443,11 +584,19 @@ export function seedDatabase(db: DB, demoDate: string): void {
   for (const [i, record] of lateDeliveries.slice(0, 3).entries()) {
     insertFollowUp.run(record.poId, record.deliveryId, D(i - 1), 'Confirm revised date with supplier.', 'open', null, null, ts(-5), ts(-5));
   }
-  const twoLinePo = db.prepare('SELECT id FROM purchase_orders WHERE number = ?').get(pos[16].number) as { id: number };
+  const twoLinePo = db.prepare('SELECT id FROM purchase_orders WHERE number = ?').get(pos[17].number) as { id: number };
   insertFollowUp.run(twoLinePo.id, null, D(4), 'Confirm remaining schedule for both lines.', 'open', null, null, ts(-1), ts(-1));
 
   const setMeta = db.prepare('INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)');
   setMeta.run('demo_date', demoDate);
+  // Simulated clock: 15:00 UTC is morning in America/Chicago. Scenario dates anchor to the demo date.
+  setMeta.run('demo_clock', `${demoDate}T15:00:00.000Z`);
+  setMeta.run('scenario_anchor', demoDate);
+  setMeta.run('fixture_version', FIXTURE_VERSION);
+  setMeta.run('cadence_stale_business_days', String(DEFAULT_OUTREACH_SETTINGS.staleBusinessDays));
+  setMeta.run('cadence_response_business_days', String(DEFAULT_OUTREACH_SETTINGS.responseWindowBusinessDays));
+  setMeta.run('cadence_elapsed_threshold', String(DEFAULT_OUTREACH_SETTINGS.elapsedThreshold));
+  setMeta.run('cadence_item_cap', String(DEFAULT_OUTREACH_SETTINGS.itemCap));
   setMeta.run('seed_version', SEED_VERSION);
   setMeta.run('seeded_at', new Date().toISOString());
   setMeta.run('issues_initialized', new Date().toISOString());
@@ -455,10 +604,102 @@ export function seedDatabase(db: DB, demoDate: string): void {
   assertIntegrity(db);
 }
 
+const UNTRACKED = 'untracked';
+
+interface ShippedRecord {
+  id: number;
+  state: 'in_transit' | 'received';
+  expectedArrival: string | null;
+  receivedAt: string | null;
+  source: string;
+  arrivalUpdatedAt: string;
+  supplierId: number;
+  warehouseId: number;
+}
+
+/**
+ * Links every dispatched or received delivery to exactly one shipment (PRD §14). SH-DEMO-01 and the
+ * untracked shipment are reserved first; remaining records group only with compatible
+ * supplier/destination records on the same date. Numbers follow stable seed order. Each tracked
+ * shipment gets a small coherent event history no later than the demo clock.
+ */
+function seedShipments(db: DB, demoDate: string, reserved: Map<string, number[]>) {
+  const at = (date: string, hour: number) => `${date}T${String(hour).padStart(2, '0')}:00:00.000Z`;
+  const records = db
+    .prepare(
+      `SELECT d.id, d.state, d.expected_arrival AS expectedArrival, d.received_at AS receivedAt, d.source,
+              d.arrival_updated_at AS arrivalUpdatedAt, p.supplier_id AS supplierId, p.warehouse_id AS warehouseId
+       FROM deliveries d JOIN po_lines l ON l.id = d.po_line_id JOIN purchase_orders p ON p.id = l.po_id
+       WHERE d.superseded_at IS NULL AND d.state <> 'planned' ORDER BY d.id`,
+    )
+    .all() as ShippedRecord[];
+  const byId = new Map(records.map((r) => [r.id, r]));
+  const groups = new Map<string, ShippedRecord[]>();
+  for (const [key, ids] of reserved) groups.set(key, ids.map((id) => byId.get(id)!));
+  const reservedIds = new Set([...reserved.values()].flat());
+  for (const r of records) {
+    if (reservedIds.has(r.id)) continue;
+    const key = `${r.state}|${r.supplierId}|${r.warehouseId}|${r.state === 'received' ? r.receivedAt : r.expectedArrival}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  // SH-DEMO-01 first, then stable seed order (first linked delivery).
+  const ordered = [...groups].sort(([ka, a], [kb, b]) => Number(kb === CASE_B.shipment) - Number(ka === CASE_B.shipment) || a[0].id - b[0].id);
+
+  const insertShipment = db.prepare(
+    `INSERT INTO shipments (number, supplier_id, warehouse_id, carrier, tracking_number, tracking_usable, carrier_status,
+                            expected_arrival, dispatched_at, carrier_delivered_at, latest_event_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const link = db.prepare('INSERT INTO shipment_deliveries (shipment_id, delivery_id) VALUES (?, ?)');
+  const insertEvent = db.prepare(
+    `INSERT INTO carrier_events (shipment_id, external_event_id, occurred_at, received_at, payload_json, applied_state)
+     VALUES (?, ?, ?, ?, ?, 'applied')`,
+  );
+
+  let tracked = 0;
+  ordered.forEach(([key, deliveries], index) => {
+    const first = deliveries[0];
+    const number = `SH-DEMO-${String(index + 1).padStart(2, '0')}`;
+    const untracked = key === UNTRACKED;
+    const carrier = key === CASE_B.shipment ? CASE_B.carrier : untracked ? null : CARRIERS[index % CARRIERS.length];
+    const tracking = untracked ? null : `DEMO-TRACK-${String(++tracked).padStart(3, '0')}`;
+    const received = first.state === 'received';
+    const eta = received ? first.receivedAt! : first.expectedArrival!;
+    // Dispatched, carrier delivered, and warehouse received in sequence; nothing after the demo clock.
+    const dispatched = received ? at(addDays(eta, -4), 14) : at(minDate(addDays(eta, -3), addDays(demoDate, -2)), 14);
+    const deliveredAt = received ? at(addDays(eta, -1), 21) : null;
+    const carrierUpdate = deliveries.find((d) => d.source === 'carrier_update' && d.arrivalUpdatedAt > dispatched);
+    const latest = deliveredAt ?? carrierUpdate?.arrivalUpdatedAt ?? dispatched;
+    const shipmentId = Number(
+      insertShipment.run(
+        number,
+        first.supplierId,
+        first.warehouseId,
+        carrier,
+        tracking,
+        untracked ? 0 : 1,
+        received ? 'delivered' : 'in_transit',
+        eta,
+        dispatched,
+        deliveredAt,
+        latest,
+      ).lastInsertRowid,
+    );
+    for (const d of deliveries) link.run(shipmentId, d.id);
+    if (untracked) return;
+    const history: [string, string, string | null][] = [[dispatched, 'picked_up', eta]];
+    if (carrierUpdate) history.push([carrierUpdate.arrivalUpdatedAt, 'eta_updated', eta]);
+    if (deliveredAt) history.push([deliveredAt, 'delivered', null]);
+    history.forEach(([time, status, value], i) =>
+      insertEvent.run(shipmentId, `SEED-${number}-${i + 1}`, time, time, JSON.stringify({ status, eta: value })),
+    );
+  });
+}
+
 const maxDate = (a: string, b: string) => (a > b ? a : b);
 const minDate = (a: string, b: string) => (a < b ? a : b);
 
-/** Throws if the dataset breaks a quantity, date, or relationship rule. Used after seeding and in tests. */
+/** Throws if the dataset breaks a quantity, date, relationship, or tracking rule. Used after seeding and in tests. */
 export function assertIntegrity(db: DB): void {
   const fail = (message: string, rows: unknown[]) => {
     if (rows.length) throw new Error(`Seed integrity: ${message}: ${JSON.stringify(rows.slice(0, 3))}`);
@@ -494,5 +735,41 @@ export function assertIntegrity(db: DB): void {
   fail(
     'supplier without PO',
     db.prepare('SELECT s.id FROM suppliers s WHERE NOT EXISTS (SELECT 1 FROM purchase_orders p WHERE p.supplier_id = s.id)').all(),
+  );
+  fail(
+    'PO creation date on or after a required dock date',
+    db.prepare('SELECT p.number FROM purchase_orders p JOIN po_lines l ON l.po_id = p.id WHERE p.created_date >= l.required_dock_date').all(),
+  );
+  fail(
+    'dispatched or received delivery without a shipment, or a not-shipped delivery with one',
+    db
+      .prepare(
+        `SELECT d.id, d.state FROM deliveries d LEFT JOIN shipment_deliveries sd ON sd.delivery_id = d.id
+         WHERE d.superseded_at IS NULL AND ((d.state <> 'planned' AND sd.delivery_id IS NULL) OR (d.state = 'planned' AND sd.delivery_id IS NOT NULL))`,
+      )
+      .all(),
+  );
+  fail(
+    'shipment supplier or destination differs from a linked PO',
+    db
+      .prepare(
+        `SELECT s.number, d.id FROM shipments s JOIN shipment_deliveries sd ON sd.shipment_id = s.id JOIN deliveries d ON d.id = sd.delivery_id
+         JOIN po_lines l ON l.id = d.po_line_id JOIN purchase_orders p ON p.id = l.po_id
+         WHERE p.supplier_id <> s.supplier_id OR p.warehouse_id <> s.warehouse_id`,
+      )
+      .all(),
+  );
+  fail('shipment without a tracking number marked usable', db.prepare('SELECT number FROM shipments WHERE tracking_number IS NULL AND tracking_usable = 1').all());
+  const untracked = db.prepare("SELECT number FROM shipments WHERE tracking_number IS NULL AND carrier_status <> 'delivered'").all();
+  if (untracked.length !== 1) throw new Error(`Seed integrity: expected exactly one in-transit shipment without tracking, found ${untracked.length}`);
+  fail(
+    'received timeline out of order (dispatched, carrier delivered, warehouse received)',
+    db
+      .prepare(
+        `SELECT s.number FROM shipments s JOIN shipment_deliveries sd ON sd.shipment_id = s.id JOIN deliveries d ON d.id = sd.delivery_id
+         WHERE d.state = 'received' AND (s.dispatched_at IS NULL OR s.carrier_delivered_at IS NULL
+           OR s.dispatched_at >= s.carrier_delivered_at OR substr(s.carrier_delivered_at, 1, 10) > d.received_at)`,
+      )
+      .all(),
   );
 }

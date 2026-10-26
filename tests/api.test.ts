@@ -4,6 +4,8 @@ import { addDays } from '../shared/dates.js';
 import { assertIntegrity, DEMO, SEED_VERSION } from '../server/db/seed.js';
 import { getDemoDate, getMeta, initializeDatabase, openDatabase, type DB } from '../server/db/db.js';
 import type { DeliveryRow } from '../shared/types.js';
+import request from 'supertest';
+import { createApp } from '../server/app.js';
 import { createTestContext, DEMO_DATE, tempDbPath, type TestContext } from './helpers.js';
 
 const D = (days: number) => addDays(DEMO_DATE, days);
@@ -360,8 +362,8 @@ describe('reminders', () => {
   });
 });
 
-describe('migration 003 on existing v2 data', () => {
-  it('preserves edits, falls back to production start for dock dates, and initializes issues once', () => {
+describe('migrations 003 and 004 on existing v2 data', () => {
+  it('preserves edits, falls back to production start for dock dates, initializes issues once, and leaves fixtures uninstalled', async () => {
     const { dir, dbPath } = tempDbPath();
     try {
       let db = openDatabase(dbPath);
@@ -398,12 +400,20 @@ describe('migration 003 on existing v2 data', () => {
       const issues = () => db.prepare('SELECT delivery_id AS id, state FROM delivery_issues').all();
       expect(issues()).toEqual([{ id: 1, state: 'open' }]);
       expect(getMeta(db, 'seed_version')).toBe('2');
+      // Migration 004 is additive: no creation date (excluded from outreach), no shipments, and no
+      // scenario fixtures until an explicit reset.
+      expect(db.prepare('SELECT created_date AS c FROM purchase_orders').get()).toEqual({ c: null });
+      expect(db.prepare('SELECT COUNT(*) AS c FROM shipments').get()).toEqual({ c: 0 });
+      expect(getMeta(db, 'fixture_version')).toBeUndefined();
       db.close();
 
       db = openDatabase(dbPath);
       initializeDatabase(db, '2030-01-01');
       expect(issues()).toEqual([{ id: 1, state: 'open' }]);
-      expect(SEED_VERSION).toBe('3');
+      expect(SEED_VERSION).toBe('4');
+      const app = request(createApp(db, { demoMode: true }));
+      await app.post('/api/demo/supplier-replies/case-a-reply-1').expect(409);
+      expect((await app.get('/api/meta').expect(200)).body).toMatchObject({ fixturesInstalled: false, seedVersion: '2', currentSeedVersion: '4' });
       db.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -872,3 +872,258 @@ tr.row-conflict > td {
 .delivery-picker {
   margin-bottom: 10px;
 }
+
+/* Manage deliveries: blue with a flag when its scope needs action, white outline otherwise. */
+button.manage-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button.manage-button.needs-action {
+  background: var(--accent);
+  color: #fff;
+}
+
+.manage-count {
+  background: #fff;
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.page-heading.with-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toolbar.filters {
+  margin-top: -4px;
+}
+
+.multi-select {
+  position: relative;
+}
+
+.multi-select-trigger.has-selection {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.multi-select-label {
+  color: var(--muted);
+}
+
+.multi-select-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.multi-select-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.multi-select-panel li {
+  padding: 2px 0;
+}
+
+.disclosure {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tracking-number {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  user-select: all;
+}
+
+.tracking-unavailable {
+  color: var(--warn);
+}
+
+.deliveries-table caption,
+.events-table caption,
+.results-table caption,
+.correspondence caption,
+.call-tasks-table caption,
+.scenario caption {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.events-table {
+  margin-top: 6px;
+}
+
+.delivery-select-table {
+  margin: 10px 0;
+}
+
+.delivery-select-table tr.selected td {
+  background: var(--accent-soft);
+}
+
+.needs-action-text {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.selected-heading {
+  margin-top: 12px;
+}
+
+.issue-section {
+  border-left: 3px solid var(--border);
+  padding: 2px 10px;
+  margin: 10px 0;
+}
+
+.issue-section h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.issue-section p {
+  margin: 2px 0;
+}
+
+.issue-reasons-list {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
+.mode-switch {
+  margin: 8px 0;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(560px, 100%);
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.12);
+  padding: 12px 16px 32px;
+  z-index: 30;
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.drawer-header h2 {
+  margin: 0;
+}
+
+.drawer-clock {
+  margin: 6px 0;
+}
+
+.scenario {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+.scenario h4 {
+  margin: 8px 0 2px;
+  font-size: 13px;
+}
+
+.steps {
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.ok-text {
+  color: var(--ok);
+}
+
+.request {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+.request-meta,
+.message-meta {
+  margin: 0 0 4px;
+}
+
+.message {
+  margin-top: 8px;
+}
+
+.message-body {
+  white-space: pre-wrap;
+  background: var(--info-soft);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.needs-review-row td {
+  background: var(--warn-soft);
+}
+
+.review-reason {
+  color: var(--warn);
+}
+
+.evidence {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.response-needs_review {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.response-answered {
+  color: var(--ok);
+}
+
+.call-tasks-table {
+  margin-bottom: 16px;
+}
+
+.compact.nested td {
+  border: none;
+  padding: 1px 6px 1px 0;
+}

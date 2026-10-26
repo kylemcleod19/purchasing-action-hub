@@ -2,9 +2,14 @@
 // or change issues. The dataset is small, so every view derives from one full read.
 import type { DB } from '../db/db.js';
 import { compareDeliveries, physicalRisk } from '../../shared/impact.js';
-import type { DeliveryRow, OpenIssue, Resolution } from '../../shared/types.js';
+import type { DeliveryRow, FilterOptions, OpenIssue, Resolution, ShipmentInfo } from '../../shared/types.js';
 
-type DeliveryRecord = Omit<DeliveryRow, 'risk' | 'issue' | 'lastResolution' | 'openFollowUps' | 'dueFollowUps'>;
+type DeliveryRecord = Omit<DeliveryRow, 'risk' | 'issue' | 'lastResolution' | 'openFollowUps' | 'dueFollowUps' | 'shipment'>;
+
+interface ShipmentRecord extends Omit<ShipmentInfo, 'trackingUsable'> {
+  deliveryId: number;
+  trackingUsable: number;
+}
 
 interface IssueRecord {
   id: number;
@@ -26,10 +31,10 @@ export function loadDeliveryRows(db: DB, demoDate: string): DeliveryRow[] {
     .prepare(
       `SELECT d.id AS deliveryId, d.version, p.id AS poId, p.number AS poNumber, p.buyer, s.id AS supplierId,
               s.name AS supplierName, l.id AS poLineId, l.line_no AS lineNo, l.part_number AS partNumber,
-              l.description, l.unit, l.required_dock_date AS requiredDock, w.name AS warehouseName,
+              l.description, l.unit, l.required_dock_date AS requiredDock, w.id AS warehouseId, w.name AS warehouseName,
               wo.id AS workOrderId, wo.number AS workOrderNumber, wo.program, wo.production_start AS productionStart,
               d.quantity, d.state, d.expected_arrival AS expectedArrival, d.received_at AS receivedAt, d.source,
-              d.arrival_updated_at AS arrivalUpdatedAt
+              d.arrival_updated_at AS arrivalUpdatedAt, d.last_supplier_confirmation_at AS lastSupplierConfirmationAt
        FROM deliveries d
        JOIN po_lines l ON l.id = d.po_line_id
        JOIN purchase_orders p ON p.id = l.po_id
@@ -73,6 +78,18 @@ export function loadDeliveryRows(db: DB, demoDate: string): DeliveryRow[] {
     }
   }
 
+  const shipments = new Map<number, ShipmentInfo>();
+  for (const { deliveryId, trackingUsable, ...shipment } of db
+    .prepare(
+      `SELECT sd.delivery_id AS deliveryId, s.id, s.number, s.carrier, s.tracking_number AS trackingNumber,
+              s.tracking_usable AS trackingUsable, s.carrier_status AS carrierStatus, s.expected_arrival AS expectedArrival,
+              s.dispatched_at AS dispatchedAt, s.carrier_delivered_at AS carrierDeliveredAt, s.latest_event_at AS latestEventAt
+       FROM shipment_deliveries sd JOIN shipments s ON s.id = sd.shipment_id`,
+    )
+    .all() as ShipmentRecord[]) {
+    shipments.set(deliveryId, { ...shipment, trackingUsable: trackingUsable === 1 });
+  }
+
   const followUps = db
     .prepare(`SELECT po_id AS poId, delivery_id AS deliveryId, due_date AS dueDate FROM follow_ups WHERE state = 'open'`)
     .all() as { poId: number; deliveryId: number | null; dueDate: string }[];
@@ -83,6 +100,7 @@ export function loadDeliveryRows(db: DB, demoDate: string): DeliveryRow[] {
       const own = followUps.filter((f) => f.deliveryId === d.deliveryId || (f.deliveryId === null && f.poId === d.poId));
       return {
         ...d,
+        shipment: shipments.get(d.deliveryId) ?? null,
         risk: physicalRisk(d, demoDate),
         issue: openByDelivery.get(d.deliveryId) ?? null,
         lastResolution: resolvedByDelivery.get(d.deliveryId) ?? null,
@@ -91,4 +109,12 @@ export function loadDeliveryRows(db: DB, demoDate: string): DeliveryRow[] {
       };
     })
     .sort(compareDeliveries);
+}
+
+/** Destination and Program line options from the full dataset, not just visible rows. */
+export function loadFilterOptions(db: DB): FilterOptions {
+  return {
+    destinations: db.prepare('SELECT id, name FROM warehouses ORDER BY name').all() as FilterOptions['destinations'],
+    programs: (db.prepare('SELECT DISTINCT program FROM work_orders ORDER BY program').all() as { program: string }[]).map((r) => r.program),
+  };
 }

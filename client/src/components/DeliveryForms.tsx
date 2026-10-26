@@ -1,15 +1,31 @@
-// Update arrival, split, and resolve forms (PRD §7). Each submits one request. "Save and resolve issue"
-// sends the disposition with the edit so the server applies both atomically.
-import { useState, type FormEvent, type ReactNode } from 'react';
+// Update arrival, split, and accept forms used inside the shared Manage deliveries modal (PRD §6, §7).
+// Each submits one request to the existing validated endpoints. "Save and resolve issue" sends the
+// disposition with the edit so the server applies both atomically; acceptance resolves without
+// touching dates or arrival-information timestamps.
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { api, ApiRequestError } from '../api';
 import { useDemo } from '../demo';
 import { meetsDateRestored, physicalRisk } from '../../../shared/impact';
 import { OUTCOME_LABELS, SOURCE_LABELS } from '../../../shared/labels';
 import { UPDATE_SOURCES, type DeliveryRow, type ResolutionOutcome } from '../../../shared/types';
-import { ArrivalDate, DateText, FormErrors, ProductionStartDate, reasonList, StateLabel } from './Labels';
+import { ArrivalDate, DateText, FormErrors, ProductionStartDate, reasonList } from './Labels';
 
 export interface SaveResult {
   message: string;
+}
+
+interface FormProps {
+  delivery: DeliveryRow;
+  onSaved: (r: SaveResult) => void;
+  onCancel: () => void;
+  /** Reports unsaved input so the modal can confirm before discarding it. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+function useReportDirty(dirty: boolean, onDirtyChange?: (dirty: boolean) => void) {
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 }
 
 interface MutationResponse {
@@ -44,41 +60,6 @@ function useSubmit() {
     }
   }
   return { saving, error, fields, run };
-}
-
-export function DeliveryContext({ delivery }: { delivery: DeliveryRow }) {
-  return (
-    <table className="compact context-table">
-      <tbody>
-        <tr>
-          <th scope="row">PO</th>
-          <td>
-            {delivery.poNumber} · line {delivery.lineNo} · #{delivery.deliveryId}
-          </td>
-          <th scope="row">Supplier</th>
-          <td>{delivery.supplierName}</td>
-        </tr>
-        <tr>
-          <th scope="row">Part</th>
-          <td>
-            {delivery.partNumber} — {delivery.description}
-          </td>
-          <th scope="row">Quantity</th>
-          <td>
-            {delivery.quantity} {delivery.unit} · <StateLabel state={delivery.state} />
-          </td>
-        </tr>
-        <tr>
-          <th scope="row">Work order</th>
-          <td>
-            {delivery.workOrderNumber} · {delivery.program}
-          </td>
-          <th scope="row">Issue</th>
-          <td>{delivery.issue ? `Open: ${reasonList(delivery.issue.reasons)}` : '—'}</td>
-        </tr>
-      </tbody>
-    </table>
-  );
 }
 
 /** Current vs. proposed dates as a table: risk icons show the comparison, no prose. */
@@ -177,7 +158,7 @@ function ResolutionFields({
   );
 }
 
-export function ArrivalForm({ delivery, onSaved, onCancel }: { delivery: DeliveryRow; onSaved: (r: SaveResult) => void; onCancel: () => void }) {
+export function ArrivalForm({ delivery, onSaved, onCancel, onDirtyChange }: FormProps) {
   const { meta } = useDemo();
   const [unknown, setUnknown] = useState(delivery.expectedArrival === null);
   const [date, setDate] = useState(delivery.expectedArrival ?? '');
@@ -188,6 +169,10 @@ export function ArrivalForm({ delivery, onSaved, onCancel }: { delivery: Deliver
   const { saving, error, fields, run } = useSubmit();
   const proposed = unknown ? null : date || null;
   const dateRestoredValid = meetsDateRestored({ ...delivery, expectedArrival: proposed }, meta?.demoDate ?? '');
+  useReportDirty(
+    unknown !== (delivery.expectedArrival === null) || date !== (delivery.expectedArrival ?? '') || source !== '' || note !== '' || resolutionNote !== '',
+    onDirtyChange,
+  );
 
   async function submit(e: FormEvent, resolve: boolean) {
     e.preventDefault();
@@ -211,7 +196,6 @@ export function ArrivalForm({ delivery, onSaved, onCancel }: { delivery: Deliver
   const missingDate = !unknown && !date;
   return (
     <form onSubmit={(e) => submit(e, false)} className="form">
-      <DeliveryContext delivery={delivery} />
       <FormErrors error={error} fields={fields} />
       <div className="field">
         <label htmlFor="arrival-date">New expected arrival</label>
@@ -273,7 +257,7 @@ interface PartState {
 const toInt = (value: string) => (/^\d+$/.test(value.trim()) ? Number(value) : NaN);
 
 /** Split a not-shipped delivery into dated quantities. Children keep the PO item and work order. */
-export function SplitForm({ delivery, onSaved, onCancel }: { delivery: DeliveryRow; onSaved: (r: SaveResult) => void; onCancel: () => void }) {
+export function SplitForm({ delivery, onSaved, onCancel, onDirtyChange }: FormProps) {
   const { meta } = useDemo();
   const [parts, setParts] = useState<PartState[]>([
     { quantity: String(delivery.quantity), date: delivery.expectedArrival ?? '', unknown: delivery.expectedArrival === null },
@@ -290,6 +274,10 @@ export function SplitForm({ delivery, onSaved, onCancel }: { delivery: DeliveryR
   const total = quantities.reduce((s, q) => s + (Number.isNaN(q) ? 0 : q), 0);
   const arrivals = parts.map((p) => (p.unknown || !p.date ? null : p.date));
   const dateRestoredValid = arrivals.every((a) => meetsDateRestored({ ...delivery, expectedArrival: a }, meta?.demoDate ?? ''));
+  useReportDirty(
+    parts.length !== 2 || parts[1].quantity !== '' || parts[1].date !== '' || parts[0].quantity !== String(delivery.quantity) || source !== '' || note !== '',
+    onDirtyChange,
+  );
 
   const problems: string[] = [];
   if (quantities.some((q) => Number.isNaN(q) || q <= 0)) problems.push('Each delivery needs a positive whole-number quantity.');
@@ -318,7 +306,6 @@ export function SplitForm({ delivery, onSaved, onCancel }: { delivery: DeliveryR
 
   return (
     <form onSubmit={(e) => submit(e, false)} className="form">
-      <DeliveryContext delivery={delivery} />
       <FormErrors error={error} fields={fields} />
       <table className="grid-table">
         <thead>
@@ -454,14 +441,19 @@ export function SplitForm({ delivery, onSaved, onCancel }: { delivery: DeliveryR
   );
 }
 
-/** Resolve the open issue without changing dates. Accepted delay is the default inline action. */
-export function ResolveForm({ delivery, onSaved, onCancel }: { delivery: DeliveryRow; onSaved: (r: SaveResult) => void; onCancel: () => void }) {
+/**
+ * Accept current dates: resolves the open issue without PATCHing dates, source, or Last update. For an
+ * unknown estimate the only disposition is Reviewed / no further action, which keeps the uncertainty.
+ */
+export function AcceptForm({ delivery, onSaved, onCancel, onDirtyChange }: FormProps) {
   const { meta } = useDemo();
-  const [outcome, setOutcome] = useState<ResolutionOutcome>('accepted_delay');
+  const unknown = delivery.expectedArrival === null;
+  const [outcome, setOutcome] = useState<ResolutionOutcome>(unknown ? 'reviewed' : 'accepted_delay');
   const [note, setNote] = useState('');
   const { saving, error, fields, run } = useSubmit();
   const issue = delivery.issue!;
   const dateRestoredValid = meetsDateRestored(delivery, meta?.demoDate ?? '');
+  useReportDirty(note !== '' || outcome !== (unknown ? 'reviewed' : 'accepted_delay'), onDirtyChange);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -476,25 +468,35 @@ export function ResolveForm({ delivery, onSaved, onCancel }: { delivery: Deliver
 
   return (
     <form onSubmit={submit} className="form">
-      <DeliveryContext delivery={delivery} />
       <DatesPreview delivery={delivery} proposed={[]} />
-      <p className="hint">Resolving records your decision. Dates and date warnings stay as they are.</p>
+      <p className="hint">
+        {unknown
+          ? 'The expected arrival stays unknown. Resolving records that you reviewed it; the date warning remains.'
+          : 'Resolving records your decision. Dates, Last update, and date warnings stay as they are.'}
+      </p>
       <FormErrors error={error} fields={fields} />
-      <ResolutionFields
-        legend="Resolution"
-        outcomes={['accepted_delay', 'date_restored', 'reviewed']}
-        outcome={outcome}
-        setOutcome={setOutcome}
-        note={note}
-        setNote={setNote}
-        dateRestoredValid={dateRestoredValid}
-      />
+      {unknown ? (
+        <div className="field">
+          <label htmlFor="resolution-note">Resolution note (optional)</label>
+          <textarea id="resolution-note" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
+        </div>
+      ) : (
+        <ResolutionFields
+          legend="Resolution"
+          outcomes={['accepted_delay', 'date_restored', 'reviewed']}
+          outcome={outcome}
+          setOutcome={setOutcome}
+          note={note}
+          setNote={setNote}
+          dateRestoredValid={dateRestoredValid}
+        />
+      )}
       <div className="form-actions">
         <button type="button" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
         <button type="submit" className="primary" disabled={saving || (outcome === 'date_restored' && !dateRestoredValid)}>
-          {saving ? 'Saving…' : outcome === 'accepted_delay' ? 'Accept delay and resolve' : 'Resolve issue'}
+          {saving ? 'Saving…' : unknown ? 'Mark reviewed and resolve' : 'Accept dates and resolve'}
         </button>
       </div>
     </form>

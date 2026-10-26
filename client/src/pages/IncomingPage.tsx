@@ -1,38 +1,28 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { api, ApiRequestError } from '../api';
 import { useDemo } from '../demo';
+import { formatClock } from '../../../shared/clock';
 import { formatDate } from '../../../shared/dates';
 import { compareDeliveries } from '../../../shared/impact';
+import { EMPTY_FILTERS, matchesFilters, parseIncomingQuery, serializeIncomingQuery, viewCounts, VIEWS, type IncomingFilters, type View } from '../../../shared/incomingFilters';
 import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS, OUTCOME_LABELS, sourceLabel } from '../../../shared/labels';
 import { DELIVERY_STATES, type DeliveryRow, type DeliveryState, type IncomingResponse } from '../../../shared/types';
-import { ArrivalForm, ResolveForm, SplitForm, type SaveResult } from '../components/DeliveryForms';
-import { ArrivalDate, DateText, Flash, IssueStatus, LastUpdate, ProductionStartDate, reasonList, riskRowClass, StateLabel } from '../components/Labels';
-import { Modal } from '../components/Modal';
-
-type View = 'action' | 'outstanding' | 'late' | 'unknown' | 'received';
-
-const VIEWS: { key: View; label: string; test: (r: DeliveryRow) => boolean }[] = [
-  { key: 'action', label: 'Needs action', test: (r) => r.issue !== null },
-  { key: 'outstanding', label: 'All outstanding', test: (r) => r.state !== 'received' },
-  // Late includes accepted/resolved delays: physical risk is independent of disposition.
-  { key: 'late', label: 'Late', test: (r) => r.risk.reasons.includes('late') },
-  { key: 'unknown', label: 'Date unknown', test: (r) => r.risk.reasons.includes('unknown') },
-  { key: 'received', label: 'Received', test: (r) => r.state === 'received' },
-];
-
-type ModalState = { kind: 'arrival' | 'split' | 'resolve'; row: DeliveryRow };
+import type { SaveResult } from '../components/DeliveryForms';
+import { DemoScenariosDrawer } from '../components/DemoScenarios';
+import { ArrivalDate, carrierStatusText, CarrierText, DateText, Flash, LastUpdate, ProductionStartDate, reasonList, riskRowClass, StateLabel, TrackingText } from '../components/Labels';
+import { ManageDeliveriesButton, ManageDeliveriesModal } from '../components/ManageDeliveries';
+import { MultiSelect } from '../components/MultiSelect';
 
 export function IncomingPage() {
-  const { resetCount } = useDemo();
+  const { dataVersion, meta } = useDemo();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<IncomingResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [view, setView] = useState<View>('action');
-  const [search, setSearch] = useState('');
-  const [supplier, setSupplier] = useState('');
-  const [state, setState] = useState<'' | DeliveryState>('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [modal, setModal] = useState<ModalState | null>(null);
+  const [modal, setModal] = useState<DeliveryRow | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -49,29 +39,20 @@ export function IncomingPage() {
 
   useEffect(() => {
     load();
-  }, [load, resetCount]);
+  }, [load, dataVersion]);
+
+  // View, search, and filters live in the URL so they survive PO navigation, back, and reload.
+  const { view, filters } = useMemo(() => parseIncomingQuery(searchParams, data?.filterOptions ?? null), [searchParams, data]);
+  const update = (nextView: View, next: IncomingFilters) => setSearchParams(serializeIncomingQuery(nextView, next), { replace: true });
+  const setFilter = (patch: Partial<IncomingFilters>) => update(view, { ...filters, ...patch });
 
   const suppliers = useMemo(() => [...new Set((data?.rows ?? []).map((r) => r.supplierName))].sort(), [data]);
   const viewTest = VIEWS.find((v) => v.key === view)!.test;
-
-  const matches = useCallback(
-    (r: DeliveryRow) => {
-      const term = search.trim().toLowerCase();
-      return (
-        viewTest(r) &&
-        (!supplier || r.supplierName === supplier) &&
-        (!state || r.state === state) &&
-        (!term || [r.poNumber, r.partNumber, r.description, r.supplierName].some((v) => v.toLowerCase().includes(term)))
-      );
-    },
-    [viewTest, search, supplier, state],
-  );
-
+  const matches = useCallback((r: DeliveryRow) => viewTest(r) && matchesFilters(r, filters), [viewTest, filters]);
   const rows = useMemo(() => (data ? data.rows.filter(matches).sort(compareDeliveries) : []), [data, matches]);
-  const counts = useMemo(
-    () => Object.fromEntries(VIEWS.map((v) => [v.key, (data?.rows ?? []).filter(v.test).length])) as Record<View, number>,
-    [data],
-  );
+  const counts = useMemo(() => viewCounts(data?.rows ?? [], filters), [data, filters]);
+  const anyFilter = filters.search || filters.supplier || filters.state || filters.destinations.length > 0 || filters.programs.length > 0;
+  const returnTo = encodeURIComponent(location.search);
 
   function toggle(id: number) {
     setExpanded((prev) => {
@@ -94,37 +75,40 @@ export function IncomingPage() {
 
   return (
     <section>
-      <div className="page-heading">
+      <div className="page-heading with-actions">
         <h1>Incoming items</h1>
-        <p className="hint">
-          One row per active delivery. Order: open issues, then production conflict, production start, required dock date (a demo
-          rule, not an optimized priority).
-        </p>
+        {meta?.demoMode && (
+          <button type="button" className="small" aria-expanded={drawerOpen} onClick={() => setDrawerOpen((o) => !o)}>
+            Demo scenarios
+          </button>
+        )}
       </div>
       <Flash message={flash} onDismiss={() => setFlash(null)} />
 
       <div className="toolbar">
         <div className="segmented" role="group" aria-label="View">
           {VIEWS.map((v) => (
-            <button key={v.key} type="button" className={view === v.key ? 'active' : ''} onClick={() => setView(v.key)} aria-pressed={view === v.key}>
+            <button key={v.key} type="button" className={view === v.key ? 'active' : ''} onClick={() => update(v.key, filters)} aria-pressed={view === v.key}>
               {v.label} <span className="count">{counts[v.key]}</span>
             </button>
           ))}
         </div>
+      </div>
+      <div className="toolbar filters">
         <input
           type="search"
           placeholder="Search PO, part, supplier"
           aria-label="Search PO, part, or supplier"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={filters.search}
+          onChange={(e) => setFilter({ search: e.target.value })}
         />
-        <select aria-label="Supplier" value={supplier} onChange={(e) => setSupplier(e.target.value)}>
+        <select aria-label="Supplier" value={filters.supplier} onChange={(e) => setFilter({ supplier: e.target.value })}>
           <option value="">All suppliers</option>
           {suppliers.map((s) => (
             <option key={s}>{s}</option>
           ))}
         </select>
-        <select aria-label="Delivery state" value={state} onChange={(e) => setState(e.target.value as DeliveryState | '')}>
+        <select aria-label="Delivery state" value={filters.state} onChange={(e) => setFilter({ state: e.target.value as DeliveryState | '' })}>
           <option value="">All states</option>
           {DELIVERY_STATES.map((s) => (
             <option key={s} value={s}>
@@ -132,6 +116,23 @@ export function IncomingPage() {
             </option>
           ))}
         </select>
+        <MultiSelect
+          label="Destination"
+          options={(data?.filterOptions.destinations ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
+          selected={filters.destinations.map(String)}
+          onChange={(values) => setFilter({ destinations: values.map(Number) })}
+        />
+        <MultiSelect
+          label="Program line"
+          options={(data?.filterOptions.programs ?? []).map((p) => ({ value: p, label: p }))}
+          selected={filters.programs}
+          onChange={(values) => setFilter({ programs: values })}
+        />
+        {anyFilter && (
+          <button type="button" className="link-button" onClick={() => update(view, EMPTY_FILTERS)}>
+            Clear all
+          </button>
+        )}
       </div>
 
       {loadError && (
@@ -144,7 +145,17 @@ export function IncomingPage() {
       )}
       {!data && !loadError && <p className="empty">Loading incoming items…</p>}
       {data && rows.length === 0 && (
-        <p className="empty">{view === 'action' ? 'No deliveries need action with these filters.' : 'No deliveries match these filters.'}</p>
+        <div className="empty">
+          {view === 'action' ? 'No deliveries need action with these filters.' : 'No deliveries match these filters.'}
+          {anyFilter && (
+            <>
+              {' '}
+              <button type="button" className="link-button" onClick={() => update(view, EMPTY_FILTERS)}>
+                Clear all filters
+              </button>
+            </>
+          )}
+        </div>
       )}
 
       {data && rows.length > 0 && (
@@ -164,8 +175,7 @@ export function IncomingPage() {
                 <th>Expected arrival</th>
                 <th>Production start</th>
                 <th>Last update</th>
-                <th>Issue</th>
-                <th>Actions</th>
+                <th>Manage deliveries</th>
               </tr>
             </thead>
             <tbody>
@@ -189,7 +199,7 @@ export function IncomingPage() {
                         </button>
                       </td>
                       <td className="nowrap">
-                        <Link to={`/purchase-orders/${row.poId}?item=${row.poLineId}`}>{row.poNumber}</Link>
+                        <Link to={`/purchase-orders/${row.poId}?item=${row.poLineId}&from=${returnTo}`}>{row.poNumber}</Link>
                         <span className="hint"> · {row.lineNo}</span>
                       </td>
                       <td>{row.supplierName}</td>
@@ -212,17 +222,19 @@ export function IncomingPage() {
                       <td>
                         <LastUpdate at={row.arrivalUpdatedAt} source={row.source} />
                       </td>
-                      <td className="nowrap">
-                        <IssueStatus row={row} />
-                      </td>
                       <td>
-                        <RowActions row={row} onAction={(kind) => setModal({ kind, row })} />
+                        <ManageDeliveriesButton
+                          openIssueCount={row.issue ? 1 : 0}
+                          readOnly={row.state === 'received'}
+                          focusKey={`incoming-${row.deliveryId}`}
+                          onClick={() => setModal(row)}
+                        />
                       </td>
                     </tr>
                     {open && (
                       <tr className="detail-row">
                         <td></td>
-                        <td colSpan={11}>
+                        <td colSpan={10}>
                           <RowDetails row={row} />
                         </td>
                       </tr>
@@ -236,44 +248,17 @@ export function IncomingPage() {
       )}
       <p className="hint footnote">{DATE_RULES_NOTE}</p>
 
-      {modal?.kind === 'arrival' && (
-        <Modal title="Update expected arrival" onClose={() => setModal(null)}>
-          <ArrivalForm delivery={modal.row} onCancel={() => setModal(null)} onSaved={(r) => saved(r, modal.row)} />
-        </Modal>
+      {modal && (
+        <ManageDeliveriesModal
+          poId={modal.poId}
+          poLineId={modal.poLineId}
+          initialDeliveryId={modal.deliveryId}
+          onClose={() => setModal(null)}
+          onSaved={(r) => saved(r, modal)}
+        />
       )}
-      {modal?.kind === 'split' && (
-        <Modal title="Split delivery" onClose={() => setModal(null)} wide>
-          <SplitForm delivery={modal.row} onCancel={() => setModal(null)} onSaved={(r) => saved(r, modal.row)} />
-        </Modal>
-      )}
-      {modal?.kind === 'resolve' && (
-        <Modal title="Resolve issue" onClose={() => setModal(null)}>
-          <ResolveForm delivery={modal.row} onCancel={() => setModal(null)} onSaved={(r) => saved(r, modal.row)} />
-        </Modal>
-      )}
+      {drawerOpen && <DemoScenariosDrawer onClose={() => setDrawerOpen(false)} />}
     </section>
-  );
-}
-
-/** Update arrival / Split / Resolve, shared by Incoming items and PO detail rows. */
-export function RowActions({ row, onAction }: { row: DeliveryRow; onAction: (kind: 'arrival' | 'split' | 'resolve') => void }) {
-  if (row.state === 'received') return <span className="hint">Read-only</span>;
-  return (
-    <div className="row-actions">
-      {row.issue && (
-        <button type="button" className="primary small" onClick={() => onAction('resolve')}>
-          Resolve
-        </button>
-      )}
-      <button type="button" className="small" onClick={() => onAction('arrival')}>
-        Update arrival
-      </button>
-      {row.state === 'planned' && (
-        <button type="button" className="small" onClick={() => onAction('split')}>
-          Split
-        </button>
-      )}
-    </div>
   );
 }
 
@@ -295,16 +280,28 @@ function RowDetails({ row }: { row: DeliveryRow }) {
           </td>
           <th scope="row">Last update</th>
           <td>
-            {sourceLabel(row.source)} · {row.arrivalUpdatedAt ? new Date(row.arrivalUpdatedAt).toLocaleString() : '—'}
+            {sourceLabel(row.source)} · {row.arrivalUpdatedAt ? formatClock(row.arrivalUpdatedAt) : '—'}
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Carrier</th>
+          <td>
+            <CarrierText row={row} />
+            {row.shipment && <span className="hint"> · {carrierStatusText(row)}</span>}
+          </td>
+          <th scope="row">Tracking number</th>
+          <td>
+            <TrackingText row={row} />
+            {row.shipment?.carrierDeliveredAt && row.state !== 'received' && (
+              <span className="hint"> · carrier delivered {formatClock(row.shipment.carrierDeliveredAt)}</span>
+            )}
           </td>
         </tr>
         <tr>
           <th scope="row">Open issue</th>
-          <td>{row.issue ? `${reasonList(row.issue.reasons)} · opened ${new Date(row.issue.openedAt).toLocaleString()}` : '—'}</td>
+          <td>{row.issue ? `${reasonList(row.issue.reasons)} · opened ${formatClock(row.issue.openedAt)}` : '—'}</td>
           <th scope="row">Last resolution</th>
-          <td>
-            {r ? `${OUTCOME_LABELS[r.outcome]} · ${r.resolvedBy} · ${new Date(r.resolvedAt).toLocaleString()}${r.note ? ` · ${r.note}` : ''}` : '—'}
-          </td>
+          <td>{r ? `${OUTCOME_LABELS[r.outcome]} · ${r.resolvedBy} · ${formatClock(r.resolvedAt)}${r.note ? ` · ${r.note}` : ''}` : '—'}</td>
         </tr>
         <tr>
           <th scope="row">Reminders</th>

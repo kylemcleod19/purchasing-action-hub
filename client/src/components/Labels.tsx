@@ -1,7 +1,7 @@
 import { formatDate } from '../../../shared/dates';
-import { DELIVERY_STATE_LABELS, OUTCOME_LABELS, REASON_LABELS, sourceLabel } from '../../../shared/labels';
+import { CARRIER_STATUS_LABELS, DELIVERY_STATE_LABELS, REASON_LABELS, sourceLabel, TRACKING_UNAVAILABLE } from '../../../shared/labels';
 import type { DeliveryRow, DeliveryState, IssueReason, PhysicalRisk } from '../../../shared/types';
-import { Icon, SOURCE_ICONS, type IconName } from './Icons';
+import { Icon, SOURCE_ICONS } from './Icons';
 
 export function StateLabel({ state }: { state: DeliveryState }) {
   return <span className={`state state-${state}`}>{DELIVERY_STATE_LABELS[state]}</span>;
@@ -76,16 +76,8 @@ export function ArrivalDate({ row, quantity, showTransit }: { row: ArrivalRow; q
   );
 }
 
-const REASON_ICONS: Record<IssueReason, IconName> = {
-  production_conflict: 'conflict',
-  late: 'warning',
-  overdue: 'clock',
-  unknown: 'question',
-  moved_later: 'later',
-};
-
 /** Accessible label for one issue reason, with exact days when that risk is currently active. */
-function reasonLabel(reason: IssueReason, row: Pick<DeliveryRow, 'risk' | 'requiredDock' | 'productionStart'>): string {
+export function reasonLabel(reason: IssueReason, row: Pick<DeliveryRow, 'risk' | 'requiredDock' | 'productionStart'>): string {
   const { risk } = row;
   const none = { daysLate: null, daysAfterStart: null, daysOverdue: null };
   if (reason === 'late' && risk.daysLate !== null) return riskTitle({ ...risk, ...none, daysLate: risk.daysLate }, row);
@@ -128,32 +120,31 @@ export function DateText({ date }: { date: string | null }) {
   return <span className="date-cell">{formatDate(date)}</span>;
 }
 
-export const reasonList = (reasons: IssueReason[]) => reasons.map((r) => REASON_LABELS[r]).join(', ');
+type Tracked = Pick<DeliveryRow, 'state' | 'shipment'>;
 
-/** Compact issue status: Open plus one labeled icon per reason, Resolved (with outcome), or an em dash. */
-export function IssueStatus({ row }: { row: Pick<DeliveryRow, 'issue' | 'lastResolution' | 'risk' | 'requiredDock' | 'productionStart'> }) {
-  if (row.issue) {
-    return (
-      <span className="issue-open">
-        <Icon name="flag" label="Open issue" /> Open
-        <span className="issue-reasons">
-          {row.issue.reasons.map((r) => (
-            <Icon key={r} name={REASON_ICONS[r]} label={reasonLabel(r, row)} className="reason" />
-          ))}
-        </span>
-      </span>
-    );
-  }
-  if (row.lastResolution) {
-    const r = row.lastResolution;
-    return (
-      <span className="issue-resolved" title={`${OUTCOME_LABELS[r.outcome]} by ${r.resolvedBy}, ${new Date(r.resolvedAt).toLocaleString()}`}>
-        Resolved
-      </span>
-    );
-  }
-  return <span className="muted-text">—</span>;
+/** Carrier name; an em dash for not-shipped quantities or an unknown carrier. */
+export function CarrierText({ row }: { row: Tracked }) {
+  return <span>{row.state !== 'planned' && row.shipment?.carrier ? row.shipment.carrier : '—'}</span>;
 }
+
+/**
+ * Tracking number as selectable text, never a link: the identifiers are synthetic. Not-shipped
+ * quantities show an em dash; dispatched quantities without a number say so.
+ */
+export function TrackingText({ row }: { row: Tracked }) {
+  if (row.state === 'planned') return <span>—</span>;
+  if (!row.shipment?.trackingNumber) return <span className="tracking-unavailable">{TRACKING_UNAVAILABLE}</span>;
+  return <span className="tracking-number">{row.shipment.trackingNumber}</span>;
+}
+
+/** Carrier state, kept distinct from warehouse receipt. */
+export function carrierStatusText(row: Tracked): string {
+  if (!row.shipment) return '—';
+  if (row.shipment.carrierStatus === 'delivered' && row.state === 'received') return 'Delivered';
+  return CARRIER_STATUS_LABELS[row.shipment.carrierStatus];
+}
+
+export const reasonList = (reasons: IssueReason[]) => reasons.map((r) => REASON_LABELS[r]).join(', ');
 
 const lastUpdateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 

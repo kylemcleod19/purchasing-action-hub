@@ -2,6 +2,7 @@
 Date: October 26, 2026
 Companion: PRD.md
 Status: Recommended defaults; Railway hosting is the user's requirement
+Revision: Shared delivery modal, query filters, and full tracking seed — October 26, 2026
 
 ## 1. Architecture decision
 For an existing implementation, update in place and preserve its Railway setup. Scaffold a new repository only if none exists. Use one TypeScript application: React/Vite frontend, Express API, and SQLite persistence. In production, Express serves both the built frontend and API from one Railway service. Use one Railway persistent volume for SQLite.
@@ -45,7 +46,7 @@ Use IDs and foreign keys, plus timestamps where needed:
 | suppliers | id, name |
 | warehouses | id, name |
 | work_orders | id, number, program, warehouse_id, production_start |
-| purchase_orders | id, number, supplier_id, warehouse_id, work_order_id NOT NULL, buyer, status |
+| purchase_orders | id, number, supplier_id, warehouse_id, work_order_id NOT NULL, buyer, status, created_date |
 | po_lines | id, po_id, part_number, description, unit, ordered_qty, required_dock_date NOT NULL |
 | deliveries | id, po_line_id, quantity, state, expected_arrival nullable, source, arrival_updated_at, received_at nullable, parent_delivery_id nullable, version, superseded_at nullable |
 | delivery_issues | id, delivery_id, state (open/resolved/superseded), reasons_json, opened_at, resolved_at nullable, resolved_by nullable, outcome nullable, note nullable, reviewed_facts_json nullable, previous_issue_id nullable, parent_issue_id nullable, version |
@@ -61,7 +62,7 @@ On split, transactionally supersede the original, create children with parent_de
 
 Add a partial unique index for one open issue per delivery. Keep resolved rows as history; reopening creates a new row rather than overwriting a resolution. reviewed_facts_json captures expected arrival, state, quantity, required dock, production start, evaluated risk reasons, and demo date at disposition. Store explicit arrival_updated_at separately from row/version changes, issue resolution, and follow-up events.
 
-Use one shared pure function for physical risk and one explicit issue transition function. Physical risk is derived; issue disposition is persisted. Issue transitions run during mutations, initial seed, or an explicit reconciliation when upstream facts/demo date change. GET endpoints must not repeatedly manufacture issues. Demo date is fixed during normal use; no background scheduler or live connector is needed.
+Use one shared pure function for physical risk and one explicit issue transition function. Physical risk is derived; issue disposition is persisted. Issue transitions run during mutations, initial seed, or an explicit reconciliation when upstream facts/demo date change. GET endpoints must not manufacture issues. Demo time advances only via explicit simulation controls; advancing time reconciles newly overdue conditions and due call tasks once. Normal browsing/restarts never advance time. No background scheduler or live connector is needed.
 
 A later estimate, known-to-unknown transition, or newly active risk reason opens a new issue after resolution. Identical facts, notes/source-only edits, and improved dates with the same accepted risks do not reopen it. Save changes retains any existing open issue even when physical risk clears. The server validates Date restored against required dock/overdue rules. See PRD for split child issue behavior; do not merely copy an open parent ID to multiple children.
 
@@ -168,10 +169,105 @@ Read docs/PRD.md and docs/ARCHITECTURE.md. Inspect the existing app and implemen
 If the initial multi-work-order schema has already been built, replace its allocation joins/UI with the single required PO work_order_id relationship. For this synthetic demo, use an explicit versioned demo-data migration/reset with the changed seed; do not arbitrarily pick a work order from conflicting legacy links or silently discard edits at every startup. Document the one-time reset. Preserve Railway configuration and unrelated working features.
 
 ## 13. Migration and focused verification for this revision
-No new service, queue, AI dependency, or deployment architecture is required. Preserve React/Express/SQLite and the Railway volume. This revision changes schema, domain rules, API payloads, and table/form presentation.
+No new service, queue, AI dependency, or deployment architecture is required. Section 14 extends this same service with deterministic demo event processing. Preserve React/Express/SQLite and the Railway volume. This revision changes schema, domain rules, API payloads, and table/form presentation.
 
 Use an ordered migration to add required dock dates, received dates, issue history, delivery lineage, and separate arrival timestamps. Existing required dock dates must come from seed/upstream facts; never use a changed expected arrival as the baseline silently. For synthetic legacy records without a baseline, document a one-time fallback to production start, or offer the explicitly confirmed updated-seed reset. Do not reset on every startup. Historical received dates must not be invented; use an unknown-date display for legacy records until explicit reseed supplies them. Backfill arrival timestamps from arrival history where available, not from follow-up completion.
 
 Initialize issue rows once for existing outstanding exceptions; a migration marker and unique-open constraint prevent duplicates. Preserve existing edits and history unless Kyle explicitly resets the demo. Do not infer previous buyer acceptance from a completed reminder. Keep independent issue and follow-up tables.
 
 Test shared risk/quantity calculations, transitions after resolution, atomic save-and-resolve and split dispositions, stale issue/delivery guards, and filtered table totals. Extend the core browser scenario to prove accepted lateness remains visible, a worse date reopens an issue, and the buyer can resolve it without visiting Follow-ups. Validate native SQLite/build and persistence using existing checks; avoid unrelated framework upgrades.
+
+## 14. Supplier and carrier simulation implementation
+### Architecture boundary
+Retain the single Railway service, SQLite volume, and current frontend. Do not install email, carrier, LLM, queue, or training infrastructure. Implement deterministic fixtures behind a small source-adapter interface. Fixture adapters return explicit structured outputs and raw source text; they do not pretend to parse arbitrary emails. Show “Simulated AI reply processing” in the UI. Unknown fixtures/text cannot receive fabricated extracted results.
+
+This is a working workflow demonstration with real persisted mutations, not a static mockup. A future real extractor can implement the same interface; its output must still pass domain validation. No provider selection or live deployment changes are necessary for these scenarios.
+
+### Minimal additive data model
+| Table/change | Fields and purpose |
+|---|---|
+| purchase_orders.created_date | Date-only creation date, required for elapsed-fraction eligibility |
+| deliveries.last_supplier_confirmation_at | Substantive supplier confirmation time, distinct from outgoing messages and generic row updates |
+| shipments | id, supplier_id, warehouse_id, carrier, tracking_number, tracking_usable, carrier_status, expected_arrival nullable, carrier_delivered_at nullable, latest_event_at, version |
+| shipment_deliveries | shipment_id, delivery_id UNIQUE; each linked delivery row is its entire shipped quantity |
+| outreach_requests | id, supplier_id, sent_at, response_due_at, state, demo_run_id, version |
+| outreach_items | id, request_id, delivery_id, requested_qty, po_line_id, expected_arrival_snapshot, delivery_version_snapshot, response_state, answered_at nullable |
+| supplier_messages | id, request_id, external_message_id UNIQUE, direction, body, sent_or_received_at, processing_state, fixture_key |
+| message_results | id, message_id, outreach_item_id nullable, classification, proposed_date nullable, proposed_qty nullable, evidence_text, expected_delivery_version, applied_at nullable, review_reason nullable |
+| call_tasks | id, request_id UNIQUE, buyer, state (open/in_progress/completed/answered), created_at, due_at, completed_at nullable, version |
+| call_task_items | task_id, outreach_item_id UNIQUE, response_state; joins preserve cross-PO visibility |
+| carrier_events | id, shipment_id, external_event_id UNIQUE, occurred_at, received_at, payload_json, applied_state, ignored_reason |
+| app_metadata additions | demo_clock timestamp, scenario anchor(s), initial cadence settings, fixture version |
+
+Keep the existing follow_ups table for manual reminders. Call tasks are a narrow system-generated request follow-up with linked items; expose both through the existing Follow-ups UI, not a new task application. Existing delivery_issues represent timing-risk actions. Source linkage in change_history should identify message/result or carrier event plus actor_type (buyer/simulated_automation), rather than attributing automated changes to the PO buyer.
+
+A shipment may contain multiple PO lines across POs for the same supplier/destination. Each delivery row belongs to at most one shipment, representing its complete quantity. Split partial dispatched quantities into explicit delivery portions in the seed before linkage (30 shipped + 20 not shipped); never link a 50-unit row and then update only 30 through an implicit allocation. Several shipments for one PO item use separate delivery rows. Do not change the one-work-order-per-PO relationship or introduce inventory allocation tables.
+
+### Selection and clock services
+Implement pure selectOutreachCandidates(data, clock, settings) using PRD section 13 rules. Cap distinct PO item lines at 20, while retaining delivery-specific requested quantities. Exclusions apply by quantity/delivery. Transactionally recheck eligibility when simulating send, insert the request/message/items, and suppress repeat supplier sends on the same local date. Do not create requests on a GET.
+
+Use a single persisted simulated timestamp in America/Chicago presentation; UTC for storage. Date comparisons derive the local date from that timestamp. Business-day arithmetic skips weekends only and preserves local wall-clock send time, including timezone offset changes. Initial defaults: 3 business days without substantive update; 1 business day response window; 50% elapsed; cap 20. The last two remain fixed bounds unless the user changes policy. Adaptive learning is not implemented.
+
+Advance-clock accepts a forward timestamp only. It runs overdue reconciliation and deadline escalation in a transaction. Task uniqueness by request and issue uniqueness per delivery make repeat reconciliation idempotent. Normal restart never moves the clock. Initial requests/events use the scenario anchor, and Case B Delivered can only apply when clock is at least its event time. Document whether switching cases requires reset; choose the simplest explicit behavior rather than silently rewinding dates.
+
+### Reply-processing contract
+Fixture result types: confirmed_arrival, revised_arrival, ambiguous, unmatched, proposed_split, or missing. Results carry message ID, requested item/delivery ID, date type (arrival/ship/unknown), quantity, supporting source text, and captured delivery version. The request supplier/thread must match the referenced PO supplier. Do not match solely on part number or trust a supplier-provided arbitrary PO ID.
+
+Only confirmed/revised arrivals with exact delivery/quantity/date matches can auto-apply. For unchanged confirmations refresh arrival_updated_at and last_supplier_confirmation_at, retaining source=email. Automated changes never invoke resolve. Existing open issues remain open even if dates improve. Late/overdue/production-conflicting updates create or update delivery_issues using existing shared logic.
+
+If a buyer or newer source changed a delivery after request capture, hold that result for review rather than overwriting it. Other independent valid rows can still apply. Pre-classify results, then transactionally persist the message, all result classifications, valid updates/history, and review-task changes. Unique external message IDs prevent reapplication. A failed transaction leaves no partial receipt of the same processing operation.
+
+Mark unanswered/ambiguous request items separately from answered ones. Quote-only content, signatures, relative ship dates, or “checking” statements do not confirm an arrival. Fixture handling must exhibit these distinctions without claiming general NLP capability. A proposed split is review-only. Clarifying replies must bind to current item/delivery versions, not reuse an obsolete extraction snapshot.
+
+Use one call task per request; merge unresolved items instead of duplicating tasks. A clear reply can remove an item from outstanding call work. Automatically mark an unstarted task answered only when all items are answered; retain in-progress tasks for buyer completion. Never resolve timing issues merely because a response arrived or a call task closed.
+
+### Carrier-processing contract
+Find a shipment using the known fixture mapping/carrier+tracking identity, then update only linked active deliveries. Validate supplier/destination consistency. Process all delivery updates, risk transitions, event receipt, and history atomically. A unique event ID prevents duplicate writes; an event older than latest_event_at is recorded as ignored, not applied. Equal-time conflicting events are held for review rather than arbitrarily winning. Newer events must also be newer than a linked delivery's last authoritative arrival update; a newer buyer override blocks automatic overwrite of that delivery and creates review work. A timestamp without an explicit ETA confirmation is not an arrival-information update.
+
+Carrier ETA is authoritative for tracked in-transit quantities unless a newer buyer override requires review. Supplier replies on those quantities cannot silently replace it. If the carrier explicitly withdraws an ETA, set affected estimates unknown and create/update issues; omission of ETA from an ordinary status event does not withdraw it.
+
+Delivered records carrier_delivered_at/status only. Do not set deliveries.state=received or received_at, increment received quantity, or clear issues. Display the separate carrier state; receipt pending is not evidence of missing material. Preserve the last estimate for audit and show carrier delivery timestamp in expansion. Routine supplier arrival requests stay suppressed for this shipment. Warehouse receipt reconciliation remains out of scope.
+
+### API and UI additions
+- GET /api/demo/scenarios: fixture choices, current clock, allowed next steps.
+- GET /api/outreach/preview: eligible supplier/item rows and exclusion reasons; read-only.
+- POST /api/demo/outreach/send: supplier/selected eligible IDs, current version/run token; creates a simulated outbound message only.
+- POST /api/demo/supplier-replies/:fixtureId: processes the designated reply once.
+- POST /api/demo/carrier-events/:fixtureId: processes the designated carrier event once.
+- POST /api/demo/advance-clock: forward-only clock mutation and reconciliation.
+- PATCH /api/call-tasks/:id: start/complete with version check.
+
+Guard simulation mutations with DEMO_MODE and label all controls. Never expose arbitrary real recipient sending. Add correspondence, request-item state, linked task and shipment/event DTOs to existing PO detail endpoints. Reuse tables/accordion patterns; a compact demo drawer is sufficient. Show blocked/stale review results visibly, not only in logs. Persist simulated outbox and inbox bodies so the interviewer can compare source text to resulting records.
+
+### Seed, migration, tests
+Add schema migrations without destructive startup reset. Preserve existing manual edits. Full fixture scenarios are installed during explicit demo reset; on upgraded existing data, show a reset-required notice if the fixture version is missing. Do not silently add extra POs/items or attach fixtures to arbitrary records. Reset clears messages, processing receipts, tasks, events, issue changes, and clock, then restores the complete deterministic baseline.
+
+Maintain synthetic supplier addresses under example.com and clearly fake tracking IDs. Generate literal dates in email bodies from the same scenario anchor as structured expected results. Capture fixtures and expected effects in separate files so tests can compare applied state to expected outcomes. Fixture playback passing is not evidence of extraction accuracy.
+
+Add two browser paths for the PRD scenarios plus focused tests for eligibility, item cap, weekend deadline, stale/duplicate reply processing, one task per partial request, shared shipment propagation, duplicate/older events, buyer override protection, delivered-versus-received, and unchanged order totals. Keep existing quantity/issue tests. Document actual checks and simulation limitations in README.
+
+## 15. Consolidated delivery UI and seeded tracking
+Implement these changes in place; no Railway/service/database replacement is needed. PRD sections 6 and 14 govern presentation and seed requirements. Remove obsolete table-level Resolve/Update/Split controls instead of adding a second access path beside them.
+
+### Shared client components
+- ManageDeliveriesButton receives explicit scope (PO item or incoming delivery) and openIssueCount. Render blue with one flag only when count > 0; otherwise white outline. Received-only scope uses View deliveries. Keep accessible action-state labels separate from physical risk flags.
+- ManageDeliveriesModal receives poLineId and optional initialDeliveryId. Use the incoming delivery ID exactly; item entry selects first open issue then first outstanding delivery. Fetch all item deliveries even when the table has filtered out siblings. Reuse existing validated update, split, and resolve endpoints; do not create a new mutation implementation for each page.
+- Local modal modes: update, accept/review, split, and read-only view. Preserve existing atomic mutation contracts; acceptance calls resolve without PATCHing dates/source. Do not send placeholder unchanged-date updates just to resolve. A successful save refreshes incoming/detail caches and preserves context.
+- DeliveryTrackingTable renders linked shipment carrier/tracking/status and each delivery’s quantity/state/date. Event history remains expandable. Operational table expansions are read-only; no repeated edit-button clusters. Remove Issue columns while retaining issue objects for button state and modal detail.
+- HistoryDisclosure is collapsed on initial page entry; retain local expansion during refreshes, increment count after mutations, expose aria-expanded and keyboard activation. No database field is needed for this preference.
+
+### Filtering and DTOs
+Use the existing work_orders.program as Program line and purchase_orders.warehouse_id as Destination; no separate program-line table. Return full-dataset filter options plus warehouse/program identifiers on incoming DTOs. Given this small seed, client filtering is acceptable; if implemented on the server, use repeated destination/program query keys and parameterized SQL with validated values. Multiple values are OR within a dimension, AND across dimensions. View counts apply other filters but not the active view predicate.
+
+Serialize multi-select filters, supplier/state, search, and view in URLSearchParams with proper encoding. Retain the incoming return URL when navigating to a PO and use it for the back link; preserve the existing item query parameter. Unknown filter values must not crash or silently select a different program. Include clearable no-results behavior.
+
+Ensure PO-detail and incoming DTOs supply shipment ID, carrier, tracking number, carrier status, expected arrival, carrier-delivered time, and warehouse received time separately. Do not overload the existing delivery state enum with carrier Delivered. Open issue counts must use full item scope for item buttons and exact delivery scope for incoming buttons. No separate issue-state column is needed in the UI.
+
+### Full seed generation
+Use the shipments/shipment_deliveries schema from section 14, with nullable tracking_number for the intentional missing-tracking case and a unique (carrier, tracking_number) constraint when non-null. Every dispatched or received seed delivery is linked to exactly one shipment; unshipped deliveries have no link. Maintain the shipment-level shared identity for multi-item/cross-PO containers. Add dispatched_at where needed for coherent seeded timeline detail; carrier_events already stores event timestamps.
+
+Generate deterministic shipment IDs and tracking numbers from stable seed order, preserving SH-DEMO-01/DEMO-TRACK-001. Reserve scenario fixtures first, then populate remaining shipped/received records, grouping only compatible supplier/destination records. Ensure at least one item spans two distinct tracked shipments and one spans tracked+unshipped portions. Keep exactly one in-transit shipment with null tracking and tracking_usable=false; all other shipped/received shipments have synthetic identifiers. Shared shipment links do not represent extra supply or extra ordered quantity.
+
+Use explicit seed-version migration/reset; never overwrite user edits at routine startup. Existing installations without tracking seed should show the existing reset-required notice, and installation instructions should tell Kyle to use the confirmed reset once to load the revised synthetic dataset. Populate all tracking fixture data in the seed script rather than relying on clicking demo controls to create baseline tracking. Keep source-event playback effects unapplied at reset.
+
+Validate unique shipment numbers, supplier/warehouse consistency, expected counts, received timeline ordering, exactly one missing-tracking shipment, shared shipment identity, and unchanged quantity totals. Add focused UI checks for single-button actions, late-but-resolved white button, exact modal selection, acceptance without timestamp edits, hidden-sibling issue counts, read-only received rows, tracking visibility, collapsed history, and filter/back/reload behavior. Do not build broad snapshot suites or change platform dependencies.

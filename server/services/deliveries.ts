@@ -6,7 +6,7 @@ import type { DB } from '../db/db.js';
 import { HttpError, stale } from '../errors.js';
 import { physicalRisk } from '../../shared/impact.js';
 import type { ResolveIssueInput, SplitInput, UpdateArrivalInput } from '../../shared/schemas.js';
-import type { DeliveryFacts, IssueReason } from '../../shared/types.js';
+import type { ActorType, DeliveryFacts, IssueReason, UpdateSource } from '../../shared/types.js';
 import { addHistory } from './history.js';
 import {
   applyIssueTransition,
@@ -27,6 +27,59 @@ function checkCurrent(delivery: DeliveryRecord, version: number) {
   if (delivery.version !== version) throw stale();
 }
 
+export interface ArrivalWrite {
+  expectedArrival: string | null;
+  source: UpdateSource;
+  note: string;
+  demoDate: string;
+  /** Arrival-information time: stored as Last update and used for history. */
+  now: string;
+  /** Substantive supplier confirmation: also refreshes last_supplier_confirmation_at. */
+  confirmation: boolean;
+  actor: string | null;
+  actorType?: ActorType;
+  sourceRef?: string | null;
+}
+
+/**
+ * Writes one arrival-information update (buyer edit, supplier reply, or carrier event) with a version
+ * precondition, records history, and runs the shared issue transition. Never resolves an issue.
+ * Callers own the transaction.
+ */
+export function recordArrivalUpdate(db: DB, delivery: DeliveryRecord, expectedVersion: number, w: ArrivalWrite): DeliveryFacts {
+  const result = db
+    .prepare(
+      `UPDATE deliveries SET expected_arrival = ?, source = ?, arrival_updated_at = ?,
+              last_supplier_confirmation_at = CASE WHEN ? THEN ? ELSE last_supplier_confirmation_at END,
+              version = version + 1
+       WHERE id = ? AND version = ? AND superseded_at IS NULL`,
+    )
+    .run(w.expectedArrival, w.source, w.now, w.confirmation ? 1 : 0, w.now, delivery.id, expectedVersion);
+  if (result.changes !== 1) throw stale();
+  const unchanged = w.expectedArrival === delivery.expectedArrival;
+  addHistory(
+    db,
+    {
+      poId: delivery.poId,
+      deliveryId: delivery.id,
+      eventType: unchanged && w.confirmation ? 'arrival_confirmed' : 'arrival_updated',
+      before: { expectedArrival: delivery.expectedArrival, source: delivery.source },
+      after: { expectedArrival: w.expectedArrival, source: w.source },
+      actor: w.actor,
+      actorType: w.actorType,
+      source: w.source,
+      sourceRef: w.sourceRef,
+      note: w.note,
+    },
+    w.now,
+  );
+  const after: DeliveryFacts = { ...delivery, expectedArrival: w.expectedArrival };
+  applyIssueTransition(db, { delivery, before: delivery, after, demoDate: w.demoDate, now: w.now });
+  return after;
+}
+
+const SUPPLIER_SOURCES: string[] = ['supplier_email', 'supplier_call'];
+
 export function updateArrival(db: DB, deliveryId: number, input: UpdateArrivalInput, demoDate: string, now = new Date().toISOString()): void {
   db.transaction(() => {
     const delivery = loadDelivery(db, deliveryId);
@@ -34,30 +87,16 @@ export function updateArrival(db: DB, deliveryId: number, input: UpdateArrivalIn
     if (delivery.state === 'received') throw new HttpError(422, 'Received deliveries are read-only.');
     if (input.resolve) requireOpenIssue(db, deliveryId, input.resolve.issueId, input.resolve.expectedIssueVersion);
 
-    const result = db
-      .prepare(
-        `UPDATE deliveries SET expected_arrival = ?, source = ?, arrival_updated_at = ?, version = version + 1
-         WHERE id = ? AND version = ? AND superseded_at IS NULL`,
-      )
-      .run(input.expectedArrival, input.source, now, deliveryId, input.version);
-    if (result.changes !== 1) throw stale();
-    addHistory(
-      db,
-      {
-        poId: delivery.poId,
-        deliveryId,
-        eventType: 'arrival_updated',
-        before: { expectedArrival: delivery.expectedArrival, source: delivery.source },
-        after: { expectedArrival: input.expectedArrival, source: input.source },
-        actor: delivery.buyer,
-        source: input.source,
-        note: input.note,
-      },
+    const after = recordArrivalUpdate(db, delivery, input.version, {
+      expectedArrival: input.expectedArrival,
+      source: input.source as UpdateSource,
+      note: input.note,
+      demoDate,
       now,
-    );
-
-    const after: DeliveryFacts = { ...delivery, expectedArrival: input.expectedArrival };
-    applyIssueTransition(db, { delivery, before: delivery, after, demoDate, now });
+      // A buyer recording what the supplier said is a substantive supplier confirmation.
+      confirmation: SUPPLIER_SOURCES.includes(input.source),
+      actor: delivery.buyer,
+    });
 
     if (input.resolve) {
       // The transition may have added reasons to the same issue; it is still the one the buyer targeted.

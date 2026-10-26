@@ -1,4 +1,5 @@
 import type { DB } from '../db/db.js';
+import { getCallTasks, getCarrierEvents, getCorrespondence } from './correspondence.js';
 import { loadDeliveryRows } from './incoming.js';
 import { itemQuantities } from '../../shared/arrivals.js';
 import type { FollowUp, HistoryEntry, PoLineDetail, PurchaseOrderDetail } from '../../shared/types.js';
@@ -53,8 +54,8 @@ export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): 
   const history = (
     db
       .prepare(
-        `SELECT id, delivery_id AS deliveryId, event_type AS eventType, before_json, after_json, actor, source, note,
-                created_at AS createdAt
+        `SELECT id, delivery_id AS deliveryId, event_type AS eventType, before_json, after_json, actor, actor_type AS actorType,
+                source, source_ref AS sourceRef, note, created_at AS createdAt
          FROM change_history WHERE po_id = ? ORDER BY created_at DESC, id DESC`,
       )
       .all(poId) as (Omit<HistoryEntry, 'before' | 'after'> & { before_json: string | null; after_json: string | null })[]
@@ -64,5 +65,14 @@ export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): 
     after: after_json ? JSON.parse(after_json) : null,
   }));
 
-  return { demoDate, po, lines, followUps, history };
+  return {
+    demoDate,
+    po,
+    lines,
+    followUps,
+    history,
+    correspondence: getCorrespondence(db, poId),
+    callTasks: getCallTasks(db, poId),
+    carrierEvents: getCarrierEvents(db, poId),
+  };
 }

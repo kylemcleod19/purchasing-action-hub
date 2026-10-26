@@ -258,6 +258,24 @@ export function insertResolvedIssue(
  * exceptions on active deliveries that have no issue history. Completed reminders are not read as
  * buyer acceptance. Guarded by an app_metadata marker and the one-open-issue index.
  */
+/**
+ * Explicit reconciliation after the demo clock moves forward: re-evaluates every outstanding active
+ * delivery against the new demo date with unchanged facts, so newly overdue conditions open (or add a
+ * reason to) an issue exactly once. Repeating it changes nothing.
+ */
+export function reconcileForDemoDate(db: DB, demoDate: string, now: string): number {
+  const ids = db.prepare(`SELECT id FROM deliveries WHERE superseded_at IS NULL AND state <> 'received' ORDER BY id`).all() as { id: number }[];
+  let changed = 0;
+  for (const { id } of ids) {
+    const delivery = loadDelivery(db, id);
+    const before = getOpenIssue(db, id);
+    const result = applyIssueTransition(db, { delivery, before: delivery, after: delivery, demoDate, now });
+    const after = getOpenIssue(db, id);
+    if (result !== null && (before?.id !== after?.id || before?.version !== after?.version)) changed++;
+  }
+  return changed;
+}
+
 export function reconcileIssues(db: DB, demoDate: string, now: string): number {
   const ids = db
     .prepare(

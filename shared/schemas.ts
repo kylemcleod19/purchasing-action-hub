@@ -79,3 +79,24 @@ export const patchFollowUpSchema = z.discriminatedUnion('action', [
 export type PatchFollowUpInput = z.infer<typeof patchFollowUpSchema>;
 
 export const resetSchema = z.object({ confirm: z.literal('RESET', { error: 'Type RESET to confirm.' }) });
+
+const isoTimestamp = z.string().refine((v) => /^\d{4}-\d{2}-\d{2}T/.test(v) && !Number.isNaN(Date.parse(v)), 'Use an ISO timestamp.');
+
+/** Simulated send: the supplier and the exact eligible delivery versions shown in the preview. */
+export const sendOutreachSchema = z.object({
+  supplierId: id,
+  items: z
+    .array(z.object({ deliveryId: id, version }))
+    .min(1, 'Choose at least one eligible item.')
+    .max(200),
+});
+export type SendOutreachInput = z.infer<typeof sendOutreachSchema>;
+
+/** Forward-only clock move; `to` must be later than the current demo clock. */
+export const advanceClockSchema = z.object({ to: isoTimestamp });
+
+export const patchCallTaskSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('start'), version }),
+  z.object({ action: z.literal('complete'), version, note: optionalNote }),
+]);
+export type PatchCallTaskInput = z.infer<typeof patchCallTaskSchema>;

@@ -6,16 +6,21 @@ and `docs/ARCHITECTURE.md` (stack, persistence, deployment). They are the author
 ## Scope guardrails
 - Each PO has exactly one work order (`purchase_orders.work_order_id`); items and deliveries inherit it.
   Do not reintroduce work-order allocation tables or split allocation grids.
-- Two views only: Incoming items and PO detail (Deliveries / Follow-ups). No separate work-order, supplier,
-  task, inventory, or dashboard modules.
+- Two views only: Incoming items and PO detail (Deliveries / Follow-ups), plus the compact Demo scenarios
+  drawer. No separate work-order, supplier, task, inventory, or dashboard modules.
 - Excluded: PO creation/approval, sourcing, replenishment, capacity, receiving/QA, inventory, freight,
-  scheduling, notifications/emails, AI extraction, live integrations, accounts/roles, KPI charts.
+  scheduling, real email sending, live AI extraction, live integrations, adaptive cadence, accounts/roles, KPI charts.
+  Supplier replies and carrier events are deterministic fixtures labeled as simulated; never fabricate extraction.
 - Synthetic data only. Do not invent research, user validation, or business results.
 
 ## Where things live
 - `shared/impact.ts`: physical date risk. `shared/issues.ts`: the issue transition rule. `shared/arrivals.ts`:
   item-table ordering and cumulative quantities. All pure and server-authoritative.
 - Issues (buyer action) and reminders (follow_ups) are independent; neither changes the other or Last update.
+  Call tasks are likewise independent of issues, and automation never resolves an issue.
+- `shared/outreach.ts`: outreach eligibility. `shared/clock.ts`: demo clock and business days.
+  `shared/incomingFilters.ts`: Incoming views/filters and URL state. `server/simulation/fixtures.ts`: fixtures;
+  expected effects in `tests/simulation-expected.ts`.
 - `shared/labels.ts`: user-facing vocabulary. `shared/schemas.ts`: request validation.
 - `server/services/`: mutations (transactional, version-checked). `server/routes/api.ts`: thin routes.
 - `server/db/migrations/`: numbered SQL. `server/db/seed.ts`: deterministic seed and integrity checks.

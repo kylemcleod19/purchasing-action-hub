@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { api, ApiRequestError } from '../api';
 import { useDemo } from '../demo';
+import { formatClock } from '../../../shared/clock';
 import { formatDate } from '../../../shared/dates';
 import { Modal } from './Modal';
 
 export function DemoBanner() {
-  const { meta, afterReset } = useDemo();
+  const { meta, refreshAll } = useDemo();
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -16,7 +17,7 @@ export function DemoBanner() {
     try {
       await api('/demo/reset', { method: 'POST', body: { confirm: 'RESET' } });
       setConfirming(false);
-      afterReset();
+      refreshAll();
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Reset failed.');
     } finally {
@@ -27,10 +28,11 @@ export function DemoBanner() {
   return (
     <div className="demo-banner">
       <span>
-        <strong>Demo date: {meta ? formatDate(meta.demoDate) : '…'}</strong> · Synthetic data only. All visitors share this
-        dataset; no emails, orders, or supplier messages are sent.
+        <strong>Demo date: {meta ? formatDate(meta.demoDate) : '…'}</strong>
+        {meta && <span className="hint"> (clock {formatClock(meta.demoClock)})</span>} · Synthetic data only. All visitors share this dataset; no
+        emails, orders, or supplier messages are sent.
       </span>
-      {meta?.seedVersion && meta.seedVersion !== meta.currentSeedVersion && (
+      {meta && ((meta.seedVersion && meta.seedVersion !== meta.currentSeedVersion) || !meta.fixturesInstalled) && (
         <span className="seed-notice">This data predates the current demo seed. Reset to load the current scenarios.</span>
       )}
       {meta?.demoMode && (
@@ -41,8 +43,8 @@ export function DemoBanner() {
       {confirming && (
         <Modal title="Reset demo data?" onClose={() => !saving && setConfirming(false)}>
           <p>
-            This replaces every change made by anyone using this demo with the original synthetic baseline, and sets the
-            demo date to today. It cannot be undone.
+            This replaces every change made by anyone using this demo with the original synthetic baseline, clears simulated
+            messages, tasks, and carrier events, and sets the demo date and clock to today. It cannot be undone.
           </p>
           {error && <div className="form-error">{error}</div>}
           <div className="form-actions">
