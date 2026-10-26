@@ -40,6 +40,14 @@ behaves as specified. They do not validate buyer needs.
 | Migration 003 on the real local v2 preview database (backup kept at `.tmp/preview-v2-backup.sqlite`): data kept, 27 issues initialized once, dock dates fall back to production start, banner flags the older seed | Pass |
 | `docker build`: image contains migrations 001 to 003; a fresh volume seeds v3 (`seedVersion` 3); health 200; direct PO URL 200; restart keeps data with no reseed | Pass |
 
+## 2026-10-26: clearer flags and row tints (UI only)
+
+| Check | Result |
+|---|---|
+| Overdue uses its own clock icon (not the late triangle); the Issue column shows one labeled icon per reason | Browser test passes: an overdue-before-dock row has two "Overdue" icons and no "Late" icon |
+| Row tints: past production start uses `row-conflict` (light red); past required dock only uses `row-late` (very light red); applied to Incoming rows, PO delivery rows, and PO item rows (worst shown delivery) | Browser test passes: demo row, accepted 60-unit child, and item row are `row-conflict`; on-time 40 and overdue-only rows are untinted; PO-24108 is `row-late` |
+| `npm test` / `npm run test:e2e` / `npm run build` | 38 passed / 2 passed / pass |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:

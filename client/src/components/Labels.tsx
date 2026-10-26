@@ -1,7 +1,7 @@
 import { formatDate } from '../../../shared/dates';
 import { DELIVERY_STATE_LABELS, OUTCOME_LABELS, REASON_LABELS, sourceLabel } from '../../../shared/labels';
 import type { DeliveryRow, DeliveryState, IssueReason, PhysicalRisk } from '../../../shared/types';
-import { Icon, SOURCE_ICONS } from './Icons';
+import { Icon, SOURCE_ICONS, type IconName } from './Icons';
 
 export function StateLabel({ state }: { state: DeliveryState }) {
   return <span className={`state state-${state}`}>{DELIVERY_STATE_LABELS[state]}</span>;
@@ -41,19 +41,48 @@ export function ArrivalDate({ row, quantity }: { row: ArrivalRow; quantity?: num
       </span>
     );
   }
-  const warn = row.risk.reasons.some((r) => r === 'late' || r === 'overdue');
+  const late = row.risk.reasons.includes('late');
+  const overdue = row.risk.reasons.includes('overdue');
   return (
-    <span className={`date-cell${warn ? ' risk-text' : ''}`}>
+    <span className={`date-cell${late || overdue ? ' risk-text' : ''}`}>
       {formatDate(row.expectedArrival)}
-      {warn && (
+      {late && (
         <>
           {' '}
-          <Icon name="warning" label={riskTitle({ ...row.risk, daysAfterStart: null }, row)} className="risk" />
+          <Icon name="warning" label={riskTitle({ ...row.risk, daysAfterStart: null, daysOverdue: null }, row)} className="risk" />
+        </>
+      )}
+      {overdue && (
+        <>
+          {' '}
+          <Icon name="clock" label={riskTitle({ ...row.risk, daysAfterStart: null, daysLate: null }, row)} className="risk" />
         </>
       )}
       {qty}
     </span>
   );
+}
+
+const REASON_ICONS: Record<IssueReason, IconName> = {
+  production_conflict: 'conflict',
+  late: 'warning',
+  overdue: 'clock',
+  unknown: 'question',
+  moved_later: 'later',
+};
+
+/** Accessible label for one issue reason, with exact days when that risk is currently active. */
+function reasonLabel(reason: IssueReason, row: Pick<DeliveryRow, 'risk' | 'requiredDock' | 'productionStart'>): string {
+  const { risk } = row;
+  const none = { daysLate: null, daysAfterStart: null, daysOverdue: null };
+  if (reason === 'late' && risk.daysLate !== null) return riskTitle({ ...risk, ...none, daysLate: risk.daysLate }, row);
+  if (reason === 'production_conflict' && risk.daysAfterStart !== null) {
+    return riskTitle({ ...risk, ...none, daysAfterStart: risk.daysAfterStart }, row);
+  }
+  if (reason === 'overdue' && risk.daysOverdue !== null) return riskTitle({ ...risk, ...none, daysOverdue: risk.daysOverdue }, row);
+  if (reason === 'unknown') return 'Date unknown: no expected arrival';
+  if (reason === 'moved_later') return 'Estimate moved later than the previous expected arrival';
+  return `${REASON_LABELS[reason]} when the issue opened`;
 }
 
 /** Production start, with an accessible marker when the expected arrival conflicts with it. */
@@ -72,18 +101,33 @@ export function ProductionStartDate({ row }: { row: ArrivalRow }) {
   );
 }
 
+/**
+ * Row tint for physical date risk: past production start (light red) outranks past required dock
+ * (very light red). Received deliveries have no risk, so they are never tinted.
+ */
+export function riskRowClass(rows: Pick<DeliveryRow, 'risk'>[]): string {
+  if (rows.some((r) => r.risk.reasons.includes('production_conflict'))) return 'row-conflict';
+  if (rows.some((r) => r.risk.reasons.includes('late'))) return 'row-late';
+  return '';
+}
+
 export function DateText({ date }: { date: string | null }) {
   return <span className="date-cell">{formatDate(date)}</span>;
 }
 
 export const reasonList = (reasons: IssueReason[]) => reasons.map((r) => REASON_LABELS[r]).join(', ');
 
-/** Compact issue status: Open (with reasons in the tooltip), Resolved (with outcome), or an em dash. */
-export function IssueStatus({ row }: { row: Pick<DeliveryRow, 'issue' | 'lastResolution'> }) {
+/** Compact issue status: Open plus one labeled icon per reason, Resolved (with outcome), or an em dash. */
+export function IssueStatus({ row }: { row: Pick<DeliveryRow, 'issue' | 'lastResolution' | 'risk' | 'requiredDock' | 'productionStart'> }) {
   if (row.issue) {
     return (
-      <span className="issue-open" title={`Open issue: ${reasonList(row.issue.reasons)}`}>
+      <span className="issue-open">
         <Icon name="flag" label="Open issue" /> Open
+        <span className="issue-reasons">
+          {row.issue.reasons.map((r) => (
+            <Icon key={r} name={REASON_ICONS[r]} label={reasonLabel(r, row)} className="reason" />
+          ))}
+        </span>
       </span>
     );
   }

@@ -19,6 +19,10 @@ const PATHS = {
   conflict: 'M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z M8 1.5v2 M8 12.5v2 M1.5 8h2 M12.5 8h2 M3.4 3.4l1.4 1.4 M11.2 11.2l1.4 1.4 M3.4 12.6l1.4-1.4 M11.2 4.8l1.4-1.4',
   // Flag (open issue)
   flag: 'M3.5 14V2 M3.5 2.5h8l-2 3 2 3h-8',
+  // Clock (overdue)
+  clock: 'M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13z M8 4.5V8l2.5 1.5',
+  // Arrow pointing later (estimate moved later)
+  later: 'M2 8h11 M9.5 4.5L13 8l-3.5 3.5',
 } as const;
 
 export type IconName = keyof typeof PATHS;

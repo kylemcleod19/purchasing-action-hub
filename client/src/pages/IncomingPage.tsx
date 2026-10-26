@@ -7,7 +7,7 @@ import { compareDeliveries } from '../../../shared/impact';
 import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS, OUTCOME_LABELS, sourceLabel } from '../../../shared/labels';
 import { DELIVERY_STATES, type DeliveryRow, type DeliveryState, type IncomingResponse } from '../../../shared/types';
 import { ArrivalForm, ResolveForm, SplitForm, type SaveResult } from '../components/DeliveryForms';
-import { ArrivalDate, DateText, Flash, IssueStatus, LastUpdate, ProductionStartDate, reasonList, StateLabel } from '../components/Labels';
+import { ArrivalDate, DateText, Flash, IssueStatus, LastUpdate, ProductionStartDate, reasonList, riskRowClass, StateLabel } from '../components/Labels';
 import { Modal } from '../components/Modal';
 
 type View = 'action' | 'outstanding' | 'late' | 'unknown' | 'received';
@@ -173,7 +173,10 @@ export function IncomingPage() {
                 const open = expanded.has(row.deliveryId);
                 return (
                   <Fragment key={row.deliveryId}>
-                    <tr className={`${open ? 'expanded' : ''}${row.issue ? ' has-issue' : ''}`} data-delivery-id={row.deliveryId}>
+                    <tr
+                      className={[open && 'expanded', row.issue && 'has-issue', riskRowClass([row])].filter(Boolean).join(' ')}
+                      data-delivery-id={row.deliveryId}
+                    >
                       <td>
                         <button
                           type="button"

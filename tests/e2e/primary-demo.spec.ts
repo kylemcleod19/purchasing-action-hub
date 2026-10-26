@@ -42,9 +42,13 @@ test('primary demo: delay opens an issue, split is resolved inline, a worse date
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByText(/New issue opened: Production conflict, Late/)).toBeVisible();
   await expect(demoRow).toContainText('Open');
-  await expect(demoRow.getByRole('img', { name: /^Late: 11 days after required dock date/ })).toBeVisible();
-  await expect(demoRow.getByRole('img', { name: /^Production conflict: 9 days after production start/ })).toBeVisible();
+  // Each risk shows beside its date and again as a labeled reason icon in the Issue column.
+  await expect(demoRow.getByRole('img', { name: /^Late: 11 days after required dock date/ })).toHaveCount(2);
+  await expect(demoRow.getByRole('img', { name: /^Production conflict: 9 days after production start/ })).toHaveCount(2);
+  await expect(demoRow.locator('.issue-reasons').getByRole('img', { name: /^Estimate moved later/ })).toBeVisible();
   await expect(demoRow.getByRole('img', { name: 'Supplier email' })).toBeVisible();
+  // Past production start takes the stronger light-red tint.
+  await expect(demoRow).toHaveClass(/\brow-conflict\b/);
 
   // 3. Open the PO (item expanded) and split with Save and resolve issue in the same form.
   await demoRow.getByRole('link', { name: 'PO-DEMO-01' }).click();
@@ -76,7 +80,12 @@ test('primary demo: delay opens an issue, split is resolved inline, a worse date
   await expect(item.locator('.issue-count')).toHaveCount(0);
   await expect(deliveries).toHaveCount(2);
   const row60 = deliveries.filter({ has: page.locator('td.num', { hasText: /^60$/ }) });
+  const row40 = deliveries.filter({ has: page.locator('td.num', { hasText: /^40$/ }) });
   await expect(row60).toContainText('Resolved');
+  // Tints follow physical risk, not issue status: the accepted 60 stays tinted, the on-time 40 does not.
+  await expect(row60).toHaveClass(/\brow-conflict\b/);
+  await expect(row40).not.toHaveClass(/\brow-(late|conflict)\b/);
+  await expect(item).toHaveClass(/\brow-conflict\b/);
 
   // 5. Move the 60 to D+18: a new issue opens; accept the delay inline without changing the date.
   await row60.getByRole('button', { name: 'Update arrival' }).click();
@@ -128,6 +137,18 @@ test('primary demo: delay opens an issue, split is resolved inline, a worse date
   await expect(page.getByText('No deliveries need action with these filters.')).toBeVisible();
   await page.getByRole('button', { name: /^Late/ }).click();
   await expect(page.locator('.incoming-table > tbody > tr:not(.detail-row)')).toHaveCount(1);
+
+  // An overdue delivery that is still before its dock date says why it is flagged.
+  await page.getByLabel('Search PO, part, or supplier').fill('PO-24110');
+  await page.getByRole('button', { name: /Needs action/ }).click();
+  const overdueRow = page.locator('.incoming-table > tbody > tr:not(.detail-row)').first();
+  await expect(overdueRow.getByRole('img', { name: /^Overdue: expected \d+ days? ago/ })).toHaveCount(2);
+  await expect(overdueRow.getByRole('img', { name: /^Late:/ })).toHaveCount(0);
+  await expect(overdueRow).not.toHaveClass(/\brow-(late|conflict)\b/);
+
+  // Past required dock but not past production start takes the very light tint.
+  await page.getByLabel('Search PO, part, or supplier').fill('PO-24108');
+  await expect(page.locator('.incoming-table > tbody > tr:not(.detail-row)').first()).toHaveClass(/\brow-late\b/);
 });
 
 test('a 10-item PO is one table; arrivals show at most two dates with +N; hidden issues still count', async ({ page, request }) => {

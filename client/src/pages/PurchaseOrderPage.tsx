@@ -18,7 +18,7 @@ import {
 import { ArrivalForm, ResolveForm, SplitForm, type SaveResult } from '../components/DeliveryForms';
 import { CompleteFollowUpForm, FollowUpForm } from '../components/FollowUpForm';
 import { Icon } from '../components/Icons';
-import { ArrivalDate, DateText, Flash, IssueStatus, LastUpdate, ProductionStartDate, StateLabel } from '../components/Labels';
+import { ArrivalDate, DateText, Flash, IssueStatus, LastUpdate, ProductionStartDate, riskRowClass, StateLabel } from '../components/Labels';
 import { Modal } from '../components/Modal';
 import { deliveryLabel, RowActions } from './IncomingPage';
 
@@ -276,7 +276,10 @@ export function PurchaseOrderPage() {
                       const open = expanded?.has(line.id) ?? false;
                       return (
                         <Fragment key={line.id}>
-                          <tr className={`${open ? 'expanded' : ''}${line.openIssueCount > 0 ? ' has-issue' : ''}`} data-line-id={line.id}>
+                          <tr
+                            className={[open && 'expanded', line.openIssueCount > 0 && 'has-issue', riskRowClass(matching)].filter(Boolean).join(' ')}
+                            data-line-id={line.id}
+                          >
                             <td>
                               <button
                                 type="button"
@@ -443,7 +446,11 @@ function DeliveriesTable({ deliveries, onAction }: { deliveries: DeliveryRow[]; 
       </thead>
       <tbody>
         {deliveries.map((d) => (
-          <tr key={d.deliveryId} data-delivery-id={d.deliveryId} className={d.issue ? 'has-issue' : undefined}>
+          <tr
+            key={d.deliveryId}
+            data-delivery-id={d.deliveryId}
+            className={[d.issue && 'has-issue', riskRowClass([d])].filter(Boolean).join(' ') || undefined}
+          >
             <td>#{d.deliveryId}</td>
             <td className="num">{d.quantity}</td>
             <td className="nowrap">

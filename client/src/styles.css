@@ -840,3 +840,27 @@ button.small {
   color: var(--warn);
   font-weight: 600;
 }
+
+.issue-reasons {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 6px;
+}
+
+.icon.reason {
+  color: var(--late);
+}
+
+/* Physical date risk tints: past required dock (very light red), past production start (light red). */
+:root {
+  --row-late: #fff6f6;
+  --row-conflict: #fde6e6;
+}
+
+tr.row-late > td {
+  background: var(--row-late);
+}
+
+tr.row-conflict > td {
+  background: var(--row-conflict);
+}
