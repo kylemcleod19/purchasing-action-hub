@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [],
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["tests/**/*.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+}
