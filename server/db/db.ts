@@ -58,9 +58,7 @@ export function initializeDatabase(db: DB, demoDate: string = todayUtc()): boole
 const DATA_TABLES = [
   'change_history',
   'follow_ups',
-  'delivery_links',
   'deliveries',
-  'work_order_links',
   'po_lines',
   'purchase_orders',
   'work_orders',

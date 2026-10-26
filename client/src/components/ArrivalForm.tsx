@@ -3,7 +3,7 @@ import { api, ApiRequestError } from '../api';
 import { formatDate } from '../../../shared/dates';
 import { SOURCE_LABELS } from '../../../shared/labels';
 import { UPDATE_SOURCES, type DeliveryRow } from '../../../shared/types';
-import { FormErrors, LinkStatusLabel } from './Labels';
+import { DateStatusLabel, FormErrors } from './Labels';
 
 export function DeliveryContext({ delivery }: { delivery: DeliveryRow }) {
   return (
@@ -31,20 +31,19 @@ export function DeliveryContext({ delivery }: { delivery: DeliveryRow }) {
         </dd>
       </div>
       <div>
-        <dt>Current expected arrival</dt>
-        <dd>{delivery.expectedArrival ? formatDate(delivery.expectedArrival) : 'Date unknown'}</dd>
+        <dt>Work order</dt>
+        <dd>
+          {delivery.workOrderNumber} · {delivery.program}
+        </dd>
       </div>
       <div>
-        <dt>Linked production starts</dt>
-        <dd>
-          {delivery.affected.length === 0
-            ? 'No linked work orders'
-            : delivery.affected.map((a) => (
-                <span key={a.workOrderLinkId} className="nowrap">
-                  {a.number} ({a.quantity}) {formatDate(a.productionStart)} <LinkStatusLabel status={a.status} />
-                  <br />
-                </span>
-              ))}
+        <dt>Expected arrival</dt>
+        <dd className="nowrap">{delivery.expectedArrival ? formatDate(delivery.expectedArrival) : 'Date unknown'}</dd>
+      </div>
+      <div>
+        <dt>Production start</dt>
+        <dd className="nowrap">
+          {formatDate(delivery.productionStart)} <DateStatusLabel status={delivery.dateStatus} />
         </dd>
       </div>
     </dl>
@@ -101,7 +100,7 @@ export function ArrivalForm({ delivery, onSaved, onCancel }: { delivery: Deliver
   return (
     <form onSubmit={submit} className="form">
       <DeliveryContext delivery={delivery} />
-      <p className="hint">Applies only to this delivery quantity. Production start dates are not changed.</p>
+      <p className="hint">Applies only to this delivery quantity. The production start date is not changed.</p>
       <FormErrors error={error} fields={fields} />
       <div className="field">
         <label htmlFor="arrival-date">New expected arrival</label>
@@ -125,8 +124,8 @@ export function ArrivalForm({ delivery, onSaved, onCancel }: { delivery: Deliver
         <span className="hint">Records where the information came from. It is not independently verified.</span>
       </div>
       <div className="field">
-        <label htmlFor="arrival-note">Note</label>
-        <textarea id="arrival-note" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} required />
+        <label htmlFor="arrival-note">Note (optional)</label>
+        <textarea id="arrival-note" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
       </div>
       <div className="form-actions">
         <button type="button" onClick={onCancel} disabled={saving}>

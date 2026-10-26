@@ -9,9 +9,13 @@ import type { DeliveryRow, IncomingResponse, PurchaseOrderDetail } from '../shar
 
 export const DEMO_DATE = '2026-10-26';
 
-export function createTestContext() {
+export function tempDbPath() {
   const dir = mkdtempSync(path.join(tmpdir(), 'pah-test-'));
-  const dbPath = path.join(dir, 'test.sqlite');
+  return { dir, dbPath: path.join(dir, 'test.sqlite') };
+}
+
+export function createTestContext() {
+  const { dir, dbPath } = tempDbPath();
   let db: DB = openDatabase(dbPath);
   initializeDatabase(db, DEMO_DATE);
   const ctx = {
@@ -50,5 +54,3 @@ export function createTestContext() {
 }
 
 export type TestContext = ReturnType<typeof createTestContext>;
-
-export const impactOf = (row: DeliveryRow, woNumber: string) => row.affected.find((a) => a.number === woNumber);

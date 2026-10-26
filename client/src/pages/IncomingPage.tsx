@@ -8,11 +8,11 @@ import { ATTENTION_LABELS, PROCESSING_TIME_NOTE, sourceLabel } from '../../../sh
 import { ATTENTION_ORDER, type AttentionReason, type DeliveryRow, type IncomingResponse } from '../../../shared/types';
 import { ArrivalForm } from '../components/ArrivalForm';
 import { FollowUpForm } from '../components/FollowUpForm';
-import { Flash, LinkStatusLabel, ReasonBadge, StateLabel } from '../components/Labels';
+import { ArrivalText, Flash, LastUpdate, ReasonBadge, StateLabel } from '../components/Labels';
 import { Modal } from '../components/Modal';
 
 type View = 'attention' | 'outstanding' | 'received';
-type SortKey = 'attention' | 'po' | 'supplier' | 'part' | 'quantity' | 'arrival' | 'start' | 'followUp';
+type SortKey = 'attention' | 'po' | 'supplier' | 'part' | 'workOrder' | 'quantity' | 'arrival' | 'start' | 'lastUpdate' | 'followUp';
 
 const VIEW_LABELS: Record<View, string> = {
   attention: 'Needs attention',
@@ -34,9 +34,11 @@ const SORTERS: Record<SortKey, (a: DeliveryRow, b: DeliveryRow) => number> = {
   po: (a, b) => a.poNumber.localeCompare(b.poNumber) || a.lineNo - b.lineNo,
   supplier: (a, b) => a.supplierName.localeCompare(b.supplierName),
   part: (a, b) => a.partNumber.localeCompare(b.partNumber),
+  workOrder: (a, b) => a.workOrderNumber.localeCompare(b.workOrderNumber),
   quantity: (a, b) => a.quantity - b.quantity,
   arrival: (a, b) => nullsLast(a.expectedArrival, b.expectedArrival),
-  start: (a, b) => nullsLast(a.earliestStart, b.earliestStart),
+  start: (a, b) => nullsLast(a.productionStart, b.productionStart),
+  lastUpdate: (a, b) => nullsLast(a.updatedAt, b.updatedAt),
   followUp: (a, b) => nullsLast(a.nextFollowUp?.dueDate, b.nextFollowUp?.dueDate),
 };
 
@@ -66,10 +68,7 @@ export function IncomingPage() {
     load();
   }, [load, resetCount]);
 
-  const suppliers = useMemo(
-    () => [...new Set((data?.rows ?? []).map((r) => r.supplierName))].sort(),
-    [data],
-  );
+  const suppliers = useMemo(() => [...new Set((data?.rows ?? []).map((r) => r.supplierName))].sort(), [data]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -125,8 +124,8 @@ export function IncomingPage() {
       <div className="page-heading">
         <h1>Incoming items</h1>
         <p className="hint">
-          One row per scheduled delivery. Default order: strongest attention reason, then earliest affected production
-          start (a simple demo rule, not an optimized priority).
+          One row per scheduled delivery. Default order: strongest attention reason, then the work order’s production start
+          (a simple demo rule, not an optimized priority).
         </p>
       </div>
       <Flash message={flash} onDismiss={() => setFlash(null)} />
@@ -178,17 +177,20 @@ export function IncomingPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th aria-label="Expand"></th>
+                <th>
+                  <span className="visually-hidden">Details</span>
+                </th>
                 {header('po', 'PO')}
                 {header('supplier', 'Supplier')}
                 {header('part', 'Part')}
                 <th>Destination</th>
+                {header('workOrder', 'Work order')}
                 {header('quantity', 'Qty', 'num')}
                 <th>Delivery state</th>
-                {header('arrival', 'Expected arrival')}
-                {header('start', 'Earliest linked start')}
-                <th>Affected WOs</th>
+                {header('arrival', 'Expected arrival', 'date-col')}
+                {header('start', 'Production start', 'date-col')}
                 {header('attention', 'Attention')}
+                {header('lastUpdate', 'Last update')}
                 {header('followUp', 'Next follow-up')}
                 <th>Actions</th>
               </tr>
@@ -196,7 +198,6 @@ export function IncomingPage() {
             <tbody>
               {rows.map((row) => {
                 const open = expanded.has(row.deliveryId);
-                const late = row.affected.filter((a) => a.status === 'late').length;
                 return (
                   <Fragment key={row.deliveryId}>
                     <tr className={open ? 'expanded' : undefined}>
@@ -205,7 +206,7 @@ export function IncomingPage() {
                           type="button"
                           className="expander"
                           aria-expanded={open}
-                          aria-label={`Details for ${row.poNumber} ${row.partNumber}`}
+                          aria-label={`Details for ${row.poNumber} line ${row.lineNo} delivery ${row.deliveryId}`}
                           onClick={() => toggle(row.deliveryId)}
                         >
                           {open ? '▾' : '▸'}
@@ -220,28 +221,24 @@ export function IncomingPage() {
                         <span className="nowrap">{row.partNumber}</span>
                         <div className="hint">{row.description}</div>
                       </td>
-                      <td>{row.warehouseName}</td>
+                      <td className="nowrap">{row.warehouseName}</td>
+                      <td className="nowrap">{row.workOrderNumber}</td>
                       <td className="num">
                         {row.quantity} <span className="hint">{row.unit}</span>
                       </td>
                       <td>
                         <StateLabel state={row.state} />
                       </td>
-                      <td className="nowrap">
-                        {row.state === 'received'
-                          ? `Received ${formatDate(row.receivedDate)}`
-                          : row.expectedArrival
-                            ? formatDate(row.expectedArrival)
-                            : 'Date unknown'}
+                      <td className="date-col">
+                        <ArrivalText row={row} />
                       </td>
-                      <td className="nowrap">{formatDate(row.earliestStart)}</td>
-                      <td className="nowrap">
-                        {row.affected.length} WO{row.affected.length === 1 ? '' : 's'}
-                        {late > 0 && <span className="late-text"> · {late} late</span>}
-                      </td>
+                      <td className="date-col nowrap">{formatDate(row.productionStart)}</td>
                       <td>
                         <ReasonBadge reason={row.primaryReason} />
                         {row.reasons.length > 1 && <span className="hint"> +{row.reasons.length - 1}</span>}
+                      </td>
+                      <td>
+                        <LastUpdate updatedAt={row.updatedAt} source={row.source} />
                       </td>
                       <td className="nowrap">
                         {row.nextFollowUp ? (
@@ -250,24 +247,26 @@ export function IncomingPage() {
                           '—'
                         )}
                       </td>
-                      <td className="actions">
-                        {row.state !== 'received' && (
-                          <button type="button" onClick={() => setModal({ kind: 'arrival', row })}>
-                            Update arrival
+                      <td>
+                        <div className="actions incoming-actions">
+                          {row.state !== 'received' && (
+                            <button type="button" onClick={() => setModal({ kind: 'arrival', row })}>
+                              Update arrival
+                            </button>
+                          )}
+                          <Link className="button" to={`/purchase-orders/${row.poId}`}>
+                            Open PO
+                          </Link>
+                          <button type="button" onClick={() => setModal({ kind: 'followUp', row })}>
+                            Add follow-up
                           </button>
-                        )}
-                        <Link className="button" to={`/purchase-orders/${row.poId}`}>
-                          Open PO
-                        </Link>
-                        <button type="button" onClick={() => setModal({ kind: 'followUp', row })}>
-                          Add follow-up
-                        </button>
+                        </div>
                       </td>
                     </tr>
                     {open && (
                       <tr className="detail-row">
                         <td></td>
-                        <td colSpan={12}>
+                        <td colSpan={13}>
                           <RowDetails row={row} />
                         </td>
                       </tr>
@@ -291,9 +290,7 @@ export function IncomingPage() {
           <FollowUpForm
             poId={modal.row.poId}
             poNumber={modal.row.poNumber}
-            deliveries={data.rows
-              .filter((r) => r.poId === modal.row.poId)
-              .map((r) => ({ id: r.deliveryId, label: deliveryLabel(r) }))}
+            deliveries={data.rows.filter((r) => r.poId === modal.row.poId).map((r) => ({ id: r.deliveryId, label: deliveryLabel(r) }))}
             defaultDeliveryId={modal.row.deliveryId}
             defaultDueDate={data.demoDate}
             onCancel={() => setModal(null)}
@@ -306,68 +303,49 @@ export function IncomingPage() {
 }
 
 export function deliveryLabel(r: DeliveryRow) {
-  return `Line ${r.lineNo} · ${r.partNumber} · ${r.quantity} ${r.unit} · ${r.expectedArrival ? formatDate(r.expectedArrival) : 'date unknown'}`;
+  return `#${r.deliveryId} · line ${r.lineNo} · ${r.partNumber} · ${r.quantity} ${r.unit} · ${
+    r.expectedArrival ? formatDate(r.expectedArrival) : 'date unknown'
+  }`;
 }
 
 function RowDetails({ row }: { row: DeliveryRow }) {
   return (
-    <div className="row-details">
-      {row.affected.length > 0 ? (
-        <WorkOrderTable row={row} />
-      ) : (
-        <p className="hint">No linked work orders.</p>
-      )}
-      <div className="detail-meta">
-        <div>
-          <strong>All attention reasons:</strong>{' '}
-          {row.reasons.map((r) => (
-            <ReasonBadge key={r} reason={r} />
-          ))}
-        </div>
-        <div>
-          <strong>Arrival source:</strong> {sourceLabel(row.source)} · updated {new Date(row.updatedAt).toLocaleString()}
-        </div>
-        {row.nextFollowUp && (
-          <div>
-            <strong>Next follow-up:</strong> {formatDate(row.nextFollowUp.dueDate)} — {row.nextFollowUp.note}
-            {row.nextFollowUp.deliveryId === null && <span className="hint"> (PO-level)</span>}
-            {row.openFollowUps > 1 && <span className="hint"> · {row.openFollowUps} open</span>}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export function WorkOrderTable({ row }: { row: DeliveryRow }) {
-  return (
-    <table className="compact">
-      <thead>
-        <tr>
-          <th>Work order</th>
-          <th>Program</th>
-          <th className="num">Qty from this delivery</th>
-          <th>Production start</th>
-          <th>Date impact</th>
-          <th>Work order across all incoming supply</th>
-        </tr>
-      </thead>
+    <table className="compact detail-table">
       <tbody>
-        {row.affected.map((a) => (
-          <tr key={a.workOrderLinkId}>
-            <td>{a.number}</td>
-            <td>{a.program}</td>
-            <td className="num">{a.quantity}</td>
-            <td>{formatDate(a.productionStart)}</td>
-            <td>
-              <LinkStatusLabel status={a.status} />
-            </td>
-            <td className="hint">
-              {a.summary.linkedQty} outstanding · {a.summary.lateQty > 0 ? <span className="late-text">{a.summary.lateQty} late</span> : '0 late'} ·{' '}
-              {a.summary.unknownQty} date unknown
-            </td>
-          </tr>
-        ))}
+        <tr>
+          <th scope="row">All attention reasons</th>
+          <td>
+            {row.reasons.map((r) => (
+              <ReasonBadge key={r} reason={r} />
+            ))}
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Work order</th>
+          <td>
+            {row.workOrderNumber} · {row.program} · production start {formatDate(row.productionStart)}
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Last arrival update</th>
+          <td>
+            {sourceLabel(row.source)} · {row.updatedAt ? new Date(row.updatedAt).toLocaleString() : '—'}
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Next follow-up</th>
+          <td>
+            {row.nextFollowUp ? (
+              <>
+                {formatDate(row.nextFollowUp.dueDate)} — {row.nextFollowUp.note}
+                {row.nextFollowUp.deliveryId === null && <span className="hint"> (whole PO)</span>}
+                {row.openFollowUps > 1 && <span className="hint"> · {row.openFollowUps} open</span>}
+              </>
+            ) : (
+              'None open'
+            )}
+          </td>
+        </tr>
       </tbody>
     </table>
   );

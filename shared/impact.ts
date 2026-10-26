@@ -1,9 +1,10 @@
 // Date-impact and attention rules (PRD §6A, §8). Pure functions shared by the server and the
-// client's split preview. The server's result is authoritative.
-import { ATTENTION_ORDER, type AttentionReason, type DeliveryState, type LinkStatus } from './types.js';
+// client's split preview. The server's result is authoritative. Every delivery is evaluated against
+// the production start of its PO's single work order.
+import { ATTENTION_ORDER, type AttentionReason, type DateStatus, type DeliveryState } from './types.js';
 
-/** Impact of one delivery on one linked work order. Unknown is never treated as on time. */
-export function linkStatus(state: DeliveryState, expectedArrival: string | null, productionStart: string): LinkStatus {
+/** Date impact of one delivery on its work order. Unknown is never treated as on time. */
+export function dateStatus(state: DeliveryState, expectedArrival: string | null, productionStart: string): DateStatus {
   if (state === 'received') return 'received';
   if (expectedArrival === null) return 'unknown';
   // Later than start is late; the same date is not a calculated conflict.
@@ -13,7 +14,7 @@ export function linkStatus(state: DeliveryState, expectedArrival: string | null,
 export interface DeliveryInput {
   state: DeliveryState;
   expectedArrival: string | null;
-  productionStarts: string[];
+  productionStart: string;
 }
 
 /**
@@ -23,9 +24,7 @@ export interface DeliveryInput {
 export function attentionReasons(delivery: DeliveryInput, demoDate: string, dueFollowUps: number): AttentionReason[] {
   if (delivery.state === 'received') return ['none'];
   const reasons = new Set<AttentionReason>();
-  for (const start of delivery.productionStarts) {
-    if (linkStatus(delivery.state, delivery.expectedArrival, start) === 'late') reasons.add('date_conflict');
-  }
+  if (dateStatus(delivery.state, delivery.expectedArrival, delivery.productionStart) === 'late') reasons.add('date_conflict');
   if (delivery.expectedArrival !== null && delivery.expectedArrival < demoDate) reasons.add('arrival_overdue');
   if (delivery.expectedArrival === null) reasons.add('date_unknown');
   if (dueFollowUps > 0) reasons.add('follow_up_due');
@@ -33,46 +32,33 @@ export function attentionReasons(delivery: DeliveryInput, demoDate: string, dueF
   return ATTENTION_ORDER.filter((r) => reasons.has(r));
 }
 
-export function earliestDate(dates: string[]): string | null {
-  return dates.length === 0 ? null : dates.reduce((a, b) => (b < a ? b : a));
-}
-
-export interface WorkOrderDeliveryPortion {
-  state: DeliveryState;
-  expectedArrival: string | null;
-  quantity: number;
-}
-
 /**
- * Late and unknown quantities for one work order across its outstanding deliveries.
- * Only the late portion counts as late; the work order's full quantity is never labeled late.
+ * Late and unknown-date quantities for one PO item across its active deliveries. Quantities of
+ * different parts are never summed into a work-order quantity.
  */
-export function workOrderImpact(productionStart: string, portions: WorkOrderDeliveryPortion[]) {
-  let linkedQty = 0;
+export function itemImpact(productionStart: string, deliveries: { state: DeliveryState; expectedArrival: string | null; quantity: number }[]) {
   let lateQty = 0;
   let unknownQty = 0;
-  for (const p of portions) {
-    if (p.state === 'received') continue;
-    linkedQty += p.quantity;
-    const status = linkStatus(p.state, p.expectedArrival, productionStart);
-    if (status === 'late') lateQty += p.quantity;
-    if (status === 'unknown') unknownQty += p.quantity;
+  for (const d of deliveries) {
+    const status = dateStatus(d.state, d.expectedArrival, productionStart);
+    if (status === 'late') lateQty += d.quantity;
+    if (status === 'unknown') unknownQty += d.quantity;
   }
-  return { linkedQty, lateQty, unknownQty };
+  return { lateQty, unknownQty };
 }
 
 /**
- * Demo ordering rule for incoming rows: attention group, then earliest affected production start
+ * Demo ordering rule for incoming rows: attention group, then the PO's production start
  * (unknown starts last). Not an optimized priority; supplier criticality is not modeled.
  */
 export function compareAttention(
-  a: { primaryReason: AttentionReason; earliestStart: string | null },
-  b: { primaryReason: AttentionReason; earliestStart: string | null },
+  a: { primaryReason: AttentionReason; productionStart: string | null },
+  b: { primaryReason: AttentionReason; productionStart: string | null },
 ): number {
   const rank = ATTENTION_ORDER.indexOf(a.primaryReason) - ATTENTION_ORDER.indexOf(b.primaryReason);
   if (rank !== 0) return rank;
-  if (a.earliestStart === b.earliestStart) return 0;
-  if (a.earliestStart === null) return 1;
-  if (b.earliestStart === null) return -1;
-  return a.earliestStart < b.earliestStart ? -1 : 1;
+  if (a.productionStart === b.productionStart) return 0;
+  if (a.productionStart === null) return 1;
+  if (b.productionStart === null) return -1;
+  return a.productionStart < b.productionStart ? -1 : 1;
 }

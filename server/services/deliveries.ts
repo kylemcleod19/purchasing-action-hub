@@ -80,20 +80,14 @@ export function updateArrival(db: DB, deliveryId: number, input: UpdateArrivalIn
         before: { expectedArrival: delivery.expectedArrival, source: delivery.source },
         after: { expectedArrival: input.expectedArrival, source: input.source },
         source: input.source,
-        note: input.note,
+        note: input.note || null,
       },
       now,
     );
   })();
 }
 
-interface SourceLink {
-  workOrderLinkId: number;
-  quantity: number;
-  workOrderNumber: string;
-}
-
-/** Splits one active planned delivery into dated parts. Returns the new delivery ids. */
+/** Splits one active planned delivery into dated parts under the same PO item. Returns the new ids. */
 export function splitDelivery(db: DB, deliveryId: number, input: SplitInput): number[] {
   return db.transaction(() => {
     const delivery = loadDelivery(db, deliveryId);
@@ -101,49 +95,29 @@ export function splitDelivery(db: DB, deliveryId: number, input: SplitInput): nu
     if (delivery.state !== 'planned') {
       throw new HttpError(422, 'Only planned deliveries can be split. In-transit and received records cannot be split.');
     }
-
-    const sourceLinks = db
-      .prepare(
-        `SELECT dl.work_order_link_id AS workOrderLinkId, dl.quantity, wo.number AS workOrderNumber
-         FROM delivery_links dl
-         JOIN work_order_links k ON k.id = dl.work_order_link_id
-         JOIN work_orders wo ON wo.id = k.work_order_id
-         WHERE dl.delivery_id = ?`,
-      )
-      .all(deliveryId) as SourceLink[];
-    validateSplit(delivery.quantity, sourceLinks, input);
+    validateSplit(delivery.quantity, input);
 
     const now = new Date().toISOString();
+    // updated_at stays as the parent's last arrival-information update; it is kept only for history.
     const superseded = db
       .prepare(
-        `UPDATE deliveries SET superseded_at = ?, updated_at = ?, version = version + 1
+        `UPDATE deliveries SET superseded_at = ?, version = version + 1
          WHERE id = ? AND version = ? AND superseded_at IS NULL`,
       )
-      .run(now, now, deliveryId, input.version);
+      .run(now, deliveryId, input.version);
     if (superseded.changes !== 1) throw stale();
 
     const insertDelivery = db.prepare(
       `INSERT INTO deliveries (po_line_id, parent_delivery_id, quantity, state, expected_arrival, source, updated_at)
        VALUES (?, ?, ?, 'planned', ?, ?, ?)`,
     );
-    const insertLink = db.prepare(
-      'INSERT INTO delivery_links (delivery_id, work_order_link_id, quantity) VALUES (?, ?, ?)',
-    );
-    const woNumber = new Map(sourceLinks.map((l) => [l.workOrderLinkId, l.workOrderNumber]));
-    const created = input.parts.map((part) => {
-      const id = Number(
-        insertDelivery.run(delivery.poLineId, deliveryId, part.quantity, part.expectedArrival, input.source, now)
-          .lastInsertRowid,
-      );
-      const links = part.links.filter((l) => l.quantity > 0);
-      for (const link of links) insertLink.run(id, link.workOrderLinkId, link.quantity);
-      return {
-        id,
-        quantity: part.quantity,
-        expectedArrival: part.expectedArrival,
-        links: links.map((l) => ({ workOrder: woNumber.get(l.workOrderLinkId), quantity: l.quantity })),
-      };
-    });
+    const created = input.parts.map((part) => ({
+      id: Number(
+        insertDelivery.run(delivery.poLineId, deliveryId, part.quantity, part.expectedArrival, input.source, now).lastInsertRowid,
+      ),
+      quantity: part.quantity,
+      expectedArrival: part.expectedArrival,
+    }));
 
     addHistory(
       db,
@@ -151,14 +125,10 @@ export function splitDelivery(db: DB, deliveryId: number, input: SplitInput): nu
         poId: delivery.poId,
         deliveryId,
         eventType: 'delivery_split',
-        before: {
-          quantity: delivery.quantity,
-          expectedArrival: delivery.expectedArrival,
-          links: sourceLinks.map((l) => ({ workOrder: l.workOrderNumber, quantity: l.quantity })),
-        },
+        before: { quantity: delivery.quantity, expectedArrival: delivery.expectedArrival },
         after: { deliveries: created },
         source: input.source,
-        note: input.note,
+        note: input.note || null,
       },
       now,
     );
@@ -191,40 +161,12 @@ export function splitDelivery(db: DB, deliveryId: number, input: SplitInput): nu
   })();
 }
 
-/** Quantity rules for a split. Throws 422 with field messages; nothing is written on failure. */
-export function validateSplit(originalQty: number, sourceLinks: { workOrderLinkId: number; quantity: number }[], input: SplitInput) {
-  const fields: Record<string, string> = {};
+/** Quantity rule for a split. Throws 422 with a field message; nothing is written on failure. */
+export function validateSplit(originalQty: number, input: SplitInput) {
   const total = input.parts.reduce((s, p) => s + p.quantity, 0);
   if (total !== originalQty) {
-    fields.parts = `Split quantities total ${total}; they must total the original ${originalQty}.`;
-  }
-
-  const original = new Map(sourceLinks.map((l) => [l.workOrderLinkId, l.quantity]));
-  const assigned = new Map<number, number>();
-  input.parts.forEach((part, i) => {
-    let partAssigned = 0;
-    const seen = new Set<number>();
-    for (const link of part.links) {
-      if (!original.has(link.workOrderLinkId) || seen.has(link.workOrderLinkId)) {
-        fields[`parts.${i}.links`] = 'Work-order assignments must use the delivery’s existing work-order links once each.';
-        continue;
-      }
-      seen.add(link.workOrderLinkId);
-      partAssigned += link.quantity;
-      assigned.set(link.workOrderLinkId, (assigned.get(link.workOrderLinkId) ?? 0) + link.quantity);
-    }
-    if (partAssigned > part.quantity) {
-      fields[`parts.${i}.quantity`] = `Assigned work-order quantity (${partAssigned}) exceeds this delivery’s quantity (${part.quantity}).`;
-    }
-  });
-  for (const [linkId, qty] of original) {
-    const got = assigned.get(linkId) ?? 0;
-    if (got !== qty) {
-      fields[`links.${linkId}`] = `Assign exactly ${qty} for this work order (currently ${got}).`;
-    }
-  }
-
-  if (Object.keys(fields).length > 0) {
-    throw new HttpError(422, 'The split does not balance. Nothing was saved.', fields);
+    throw new HttpError(422, 'The split does not balance. Nothing was saved.', {
+      parts: `Split quantities total ${total}; they must total the original ${originalQty}.`,
+    });
   }
 }

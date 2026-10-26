@@ -1,14 +1,17 @@
 import type { DB } from '../db/db.js';
 import { loadDeliveryRows } from './incoming.js';
+import { itemImpact } from '../../shared/impact.js';
 import type { FollowUp, HistoryEntry, PoLineDetail, PurchaseOrderDetail } from '../../shared/types.js';
 
 export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): PurchaseOrderDetail | null {
   const po = db
     .prepare(
-      `SELECT p.id, p.number, p.status, p.buyer, s.name AS supplierName, w.name AS warehouseName
+      `SELECT p.id, p.number, p.status, p.buyer, s.name AS supplierName, w.name AS warehouseName,
+              wo.number AS workOrderNumber, wo.program, wo.production_start AS productionStart
        FROM purchase_orders p
        JOIN suppliers s ON s.id = p.supplier_id
        JOIN warehouses w ON w.id = p.warehouse_id
+       JOIN work_orders wo ON wo.id = p.work_order_id
        WHERE p.id = ?`,
     )
     .get(poId) as PurchaseOrderDetail['po'] | undefined;
@@ -24,7 +27,7 @@ export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): 
         `SELECT id, line_no AS lineNo, part_number AS partNumber, description, unit, ordered_qty AS orderedQty
          FROM po_lines WHERE po_id = ? ORDER BY line_no`,
       )
-      .all(poId) as Omit<PoLineDetail, 'plannedQty' | 'inTransitQty' | 'receivedQty' | 'deliveries'>[]
+      .all(poId) as Pick<PoLineDetail, 'id' | 'lineNo' | 'partNumber' | 'description' | 'unit' | 'orderedQty'>[]
   ).map((line): PoLineDetail => {
     const deliveries = rows.filter((r) => r.poLineId === line.id);
     const qty = (state: string) => deliveries.filter((d) => d.state === state).reduce((s, d) => s + d.quantity, 0);
@@ -33,6 +36,7 @@ export function getPurchaseOrderDetail(db: DB, poId: number, demoDate: string): 
       plannedQty: qty('planned'),
       inTransitQty: qty('in_transit'),
       receivedQty: qty('received'),
+      ...itemImpact(po.productionStart, deliveries),
       deliveries,
     };
   });

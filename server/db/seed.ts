@@ -1,13 +1,15 @@
 // Deterministic synthetic dataset (PRD §9). All business dates are offsets from the demo date,
 // so scenarios stay valid whenever the database is reset. Fictional suppliers, parts, and programs.
+// Each PO belongs to exactly one work order; its items and deliveries inherit it.
 import type { DB } from './db.js';
 import { addDays } from '../../shared/dates.js';
+
+export const SEED_VERSION = '2';
 
 export const DEMO = {
   poNumber: 'PO-DEMO-01',
   partNumber: 'HX-2210',
-  woA: 'WO-DEMO-A',
-  woB: 'WO-DEMO-B',
+  workOrder: 'WO-DEMO-A',
 } as const;
 
 const SUPPLIERS = [
@@ -89,9 +91,17 @@ function createRng(seed: number) {
   };
   const int = (min: number, max: number) => min + Math.floor(next() * (max - min + 1));
   const pick = <T>(items: readonly T[]) => items[Math.floor(next() * items.length)];
-  return { next, int, pick };
+  const shuffle = <T>(items: T[]) => {
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(next() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+  };
+  return { next, int, pick, shuffle };
 }
 
+type Rng = ReturnType<typeof createRng>;
 type Category = 'healthy' | 'received' | 'late' | 'unknown' | 'overdue' | 'carrier';
 
 interface WorkOrderSpec {
@@ -100,26 +110,20 @@ interface WorkOrderSpec {
   warehouse: number;
   start: string;
 }
-interface LinkSpec {
-  wo: number;
-  qty: number;
-}
 interface DeliverySpec {
   qty: number;
-  links: LinkSpec[];
   category: Category;
 }
 interface LineSpec {
   partNumber: string;
   description: string;
-  links: LinkSpec[];
+  qty: number;
   deliveries: DeliverySpec[];
-  fixed?: boolean;
 }
 interface PoSpec {
   number: string;
   supplier: number;
-  warehouse: number;
+  workOrder: number;
   buyer: string;
   lines: LineSpec[];
   anchor?: Category | 'demo';
@@ -141,27 +145,17 @@ export function seedDatabase(db: DB, demoDate: string): void {
   const D = (days: number) => addDays(demoDate, days);
   const ts = (days: number, hour = 15) => `${D(days)}T${String(hour).padStart(2, '0')}:00:00.000Z`;
 
-  // Work orders: 38 generated plus the two primary-demo work orders, 20 per warehouse.
+  // 20 work orders: 19 generated plus the primary-demo work order.
   const workOrders: WorkOrderSpec[] = [];
-  for (let i = 0; i < 38; i++) {
-    workOrders.push({
-      number: `WO-${30101 + i}`,
-      program: rng.pick(PROGRAMS),
-      warehouse: i % 2,
-      start: D(rng.int(3, 45)),
-    });
+  for (let i = 0; i < 19; i++) {
+    workOrders.push({ number: `WO-${30101 + i}`, program: rng.pick(PROGRAMS), warehouse: i % 2, start: D(rng.int(3, 45)) });
   }
-  const woA = workOrders.push({ number: DEMO.woA, program: 'Program Atlas', warehouse: 0, start: D(7) }) - 1;
-  const woB = workOrders.push({ number: DEMO.woB, program: 'Program Atlas', warehouse: 0, start: D(14) }) - 1;
-  const demoWos = new Set([woA, woB]);
+  const demoWo = workOrders.push({ number: DEMO.workOrder, program: 'Program Atlas', warehouse: 0, start: D(7) }) - 1;
 
-  // Purchase orders: 5 with 10 lines, 10 with 1 line, 10 with 2 lines (80 lines).
-  // Suppliers 0-4 have two POs; the others one each.
-  const supplierSlots = [...SUPPLIERS.keys(), 0, 1, 2, 3, 4];
-  for (let i = supplierSlots.length - 1; i > 0; i--) {
-    const j = Math.floor(rng.next() * (i + 1));
-    [supplierSlots[i], supplierSlots[j]] = [supplierSlots[j], supplierSlots[i]];
-  }
+  // 25 POs: 5 with 10 lines, 10 with 1 line, 10 with 2 lines (80 lines).
+  // Suppliers 0-4 have two POs and work orders 0-4 have two POs; the rest one each.
+  const supplierSlots = rng.shuffle([...SUPPLIERS.keys(), 0, 1, 2, 3, 4]);
+  const workOrderSlots = rng.shuffle([...Array(19).keys(), 0, 1, 2, 3, 4]);
   const pos: PoSpec[] = [];
   for (let i = 0; i < 25; i++) {
     const lineCount = i < 5 ? 10 : i < 15 ? 1 : 2;
@@ -169,68 +163,25 @@ export function seedDatabase(db: DB, demoDate: string): void {
     pos.push({
       number: anchor === 'demo' ? DEMO.poNumber : `PO-${24101 + i}`,
       supplier: supplierSlots[i],
-      warehouse: anchor === 'demo' ? 0 : i % 2,
+      workOrder: anchor === 'demo' ? demoWo : workOrderSlots.pop()!,
       buyer: BUYERS[i % BUYERS.length],
       anchor,
       lines: Array.from({ length: lineCount }, () => {
         const [partNumber, description] = rng.pick(PARTS);
-        return { partNumber, description, links: [], deliveries: [] };
+        return { partNumber, description, qty: rng.int(2, 40) * 2, deliveries: [] };
       }),
     });
   }
 
-  // Primary demo line: 100 units, 40 for WO-DEMO-A and 60 for WO-DEMO-B, one planned delivery.
+  // Primary demo line: 100 units for WO-DEMO-A, one planned delivery arriving D+5.
   const demoPo = pos.find((p) => p.anchor === 'demo')!;
-  const demoLinks = [
-    { wo: woA, qty: 40 },
-    { wo: woB, qty: 60 },
-  ];
   demoPo.lines[0] = {
     partNumber: DEMO.partNumber,
     description: 'Wire harness, sensor mast',
-    links: demoLinks,
-    deliveries: [{ qty: 100, links: demoLinks, category: 'healthy' }],
-    fixed: true,
+    qty: 100,
+    deliveries: [{ qty: 100, category: 'healthy' }],
   };
 
-  // Upstream work-order links within the PO's destination warehouse. Demo work orders are linked
-  // separately below so that their other supply stays on time.
-  const woCandidates = (warehouse: number) =>
-    workOrders.map((wo, idx) => ({ wo, idx })).filter(({ wo, idx }) => wo.warehouse === warehouse && !demoWos.has(idx));
-  for (const po of pos) {
-    for (const line of po.lines) {
-      if (line.fixed) continue;
-      const r = rng.next();
-      const count = r < 0.6 ? 1 : r < 0.9 ? 2 : 3;
-      const candidates = woCandidates(po.warehouse);
-      while (line.links.length < count) {
-        const { idx } = rng.pick(candidates);
-        if (line.links.some((l) => l.wo === idx)) continue;
-        line.links.push({ wo: idx, qty: rng.int(2, 30) * 2 });
-      }
-    }
-  }
-
-  // Every work order needs at least one linked PO item.
-  const linkedWos = new Set(pos.flatMap((p) => p.lines.flatMap((l) => l.links.map((k) => k.wo))));
-  const generatedLines = (warehouse: number) =>
-    pos.filter((p) => p.warehouse === warehouse && !p.anchor).flatMap((p) => p.lines.filter((l) => !l.fixed));
-  workOrders.forEach((wo, idx) => {
-    if (linkedWos.has(idx) || demoWos.has(idx)) return;
-    const line = rng.pick(generatedLines(wo.warehouse).filter((l) => !l.links.some((k) => k.wo === idx)));
-    line.links.push({ wo: idx, qty: rng.int(2, 15) * 2 });
-  });
-
-  // Demo work orders depend on several items; those deliveries are kept on time.
-  const demoSupportLines = new Set<LineSpec>();
-  for (const wo of [woA, woA, woB, woB]) {
-    const options = generatedLines(0).filter((l) => !demoSupportLines.has(l) && l.links.length < 3);
-    const line = rng.pick(options);
-    line.links.push({ wo, qty: rng.int(4, 20) * 2 });
-    demoSupportLines.add(line);
-  }
-
-  // Delivery schedule lines and their date categories.
   const randomCategory = (): Category => {
     const r = rng.next();
     if (r < 0.55) return 'healthy';
@@ -240,23 +191,19 @@ export function seedDatabase(db: DB, demoDate: string): void {
     return 'overdue';
   };
   for (const po of pos) {
+    if (po.anchor === 'demo') continue;
     for (const line of po.lines) {
-      if (line.fixed) continue;
-      const total = line.links.reduce((s, l) => s + l.qty, 0);
-      const protectedLine = demoSupportLines.has(line);
       if (po.anchor) {
-        line.deliveries = [{ qty: total, links: line.links, category: po.anchor as Category }];
-      } else if (total >= 12 && rng.next() < 0.2) {
-        // Two scheduled deliveries: the first already moving or received, the rest planned.
-        const firstQty = Math.round(total * (0.3 + rng.next() * 0.3));
-        const [firstLinks, restLinks] = distribute(line.links, firstQty);
+        line.deliveries = [{ qty: line.qty, category: po.anchor }];
+      } else if (line.qty >= 12 && rng.next() < 0.2) {
+        // Two scheduled deliveries for the same work order: the first already moving or received.
+        const firstQty = Math.round(line.qty * (0.3 + rng.next() * 0.3));
         line.deliveries = [
-          { qty: firstQty, links: firstLinks, category: rng.next() < 0.5 ? 'received' : 'carrier' },
-          { qty: total - firstQty, links: restLinks, category: protectedLine ? 'healthy' : randomCategory() },
+          { qty: firstQty, category: rng.next() < 0.5 ? 'received' : 'carrier' },
+          { qty: line.qty - firstQty, category: randomCategory() },
         ];
       } else {
-        const category = protectedLine ? (rng.next() < 0.3 ? 'received' : 'healthy') : randomCategory();
-        line.deliveries = [{ qty: total, links: line.links, category }];
+        line.deliveries = [{ qty: line.qty, category: randomCategory() }];
       }
     }
   }
@@ -266,26 +213,18 @@ export function seedDatabase(db: DB, demoDate: string): void {
   const supplierIds = SUPPLIERS.map((name) => Number(insertSupplier.run(name).lastInsertRowid));
   const insertWarehouse = db.prepare('INSERT INTO warehouses (code, name) VALUES (?, ?)');
   const warehouseIds = WAREHOUSES.map((w) => Number(insertWarehouse.run(w.code, w.name).lastInsertRowid));
-  const insertWo = db.prepare(
-    'INSERT INTO work_orders (number, program, warehouse_id, production_start) VALUES (?, ?, ?, ?)',
-  );
-  const woIds = workOrders.map((wo) =>
-    Number(insertWo.run(wo.number, wo.program, warehouseIds[wo.warehouse], wo.start).lastInsertRowid),
-  );
+  const insertWo = db.prepare('INSERT INTO work_orders (number, program, warehouse_id, production_start) VALUES (?, ?, ?, ?)');
+  const woIds = workOrders.map((wo) => Number(insertWo.run(wo.number, wo.program, warehouseIds[wo.warehouse], wo.start).lastInsertRowid));
 
   const insertPo = db.prepare(
-    'INSERT INTO purchase_orders (number, supplier_id, warehouse_id, buyer, status) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO purchase_orders (number, supplier_id, warehouse_id, work_order_id, buyer, status) VALUES (?, ?, ?, ?, ?, ?)',
   );
   const insertLine = db.prepare(
     'INSERT INTO po_lines (po_id, line_no, part_number, description, unit, ordered_qty) VALUES (?, ?, ?, ?, ?, ?)',
   );
-  const insertLink = db.prepare('INSERT INTO work_order_links (po_line_id, work_order_id, quantity) VALUES (?, ?, ?)');
   const insertDelivery = db.prepare(
     `INSERT INTO deliveries (po_line_id, quantity, state, expected_arrival, received_date, source, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const insertDeliveryLink = db.prepare(
-    'INSERT INTO delivery_links (delivery_id, work_order_link_id, quantity) VALUES (?, ?, ?)',
   );
   const insertFollowUp = db.prepare(
     `INSERT INTO follow_ups (po_id, delivery_id, due_date, note, state, completion_note, completed_at, created_at, updated_at)
@@ -300,30 +239,27 @@ export function seedDatabase(db: DB, demoDate: string): void {
   const lateDeliveries: { poId: number; deliveryId: number }[] = [];
 
   for (const po of pos) {
-    const allCategories = po.lines.flatMap((l) => l.deliveries.map((d) => d.category));
-    const status = allCategories.every((c) => c === 'received')
+    const wo = workOrders[po.workOrder];
+    const categories = po.lines.flatMap((l) => l.deliveries.map((d) => d.category));
+    const status = categories.every((c) => c === 'received')
       ? 'Received'
-      : allCategories.some((c) => c === 'received')
+      : categories.some((c) => c === 'received')
         ? 'Partially received'
         : 'Open';
     const poId = Number(
-      insertPo.run(po.number, supplierIds[po.supplier], warehouseIds[po.warehouse], po.buyer, status).lastInsertRowid,
+      insertPo.run(po.number, supplierIds[po.supplier], warehouseIds[wo.warehouse], woIds[po.workOrder], po.buyer, status)
+        .lastInsertRowid,
     );
+    // The initial PO schedule was recorded when the PO was placed.
+    const scheduledAt = ts(-rng.int(14, 40), rng.int(13, 22));
     po.lines.forEach((line, lineIndex) => {
-      const orderedQty = line.links.reduce((s, l) => s + l.qty, 0);
       const lineId = Number(
-        insertLine.run(poId, lineIndex + 1, line.partNumber, line.description, 'EA', orderedQty).lastInsertRowid,
+        insertLine.run(poId, lineIndex + 1, line.partNumber, line.description, 'EA', line.qty).lastInsertRowid,
       );
-      const linkIds = new Map<number, number>();
-      for (const link of line.links) {
-        linkIds.set(link.wo, Number(insertLink.run(lineId, woIds[link.wo], link.qty).lastInsertRowid));
-      }
       for (const delivery of line.deliveries) {
-        const earliest = delivery.links.map((l) => workOrders[l.wo].start).sort()[0];
         const { state, arrival } =
-          po.anchor === 'demo'
-            ? { state: 'planned' as const, arrival: D(5) }
-            : schedule(delivery.category, earliest, demoDate, rng);
+          po.anchor === 'demo' ? { state: 'planned' as const, arrival: D(5) } : schedule(delivery.category, wo.start, demoDate, rng);
+        const carrierUpdate = delivery.category === 'carrier' && po.anchor === 'carrier';
         const deliveryId = Number(
           insertDelivery.run(
             lineId,
@@ -331,20 +267,19 @@ export function seedDatabase(db: DB, demoDate: string): void {
             state,
             arrival,
             state === 'received' ? arrival : null,
-            delivery.category === 'carrier' && po.anchor ? 'carrier_update' : 'po_schedule',
-            delivery.category === 'carrier' && po.anchor ? ts(-1, 9) : ts(-12, 14),
+            carrierUpdate ? 'carrier_update' : 'po_schedule',
+            carrierUpdate ? ts(-1, 9) : scheduledAt,
           ).lastInsertRowid,
         );
-        for (const link of delivery.links) insertDeliveryLink.run(deliveryId, linkIds.get(link.wo), link.qty);
         if (po.anchor) anchorRecords.set(po.anchor, { poId, deliveryId });
         if (delivery.category === 'late' && !po.anchor) lateDeliveries.push({ poId, deliveryId });
-        if (delivery.category === 'carrier' && po.anchor) {
+        if (carrierUpdate) {
           insertHistory.run(
             poId,
             deliveryId,
             'arrival_updated',
-            JSON.stringify({ expectedArrival: addDays(arrival!, -1), state: 'in_transit' }),
-            JSON.stringify({ expectedArrival: arrival, state: 'in_transit' }),
+            JSON.stringify({ expectedArrival: addDays(arrival!, -1), source: 'po_schedule' }),
+            JSON.stringify({ expectedArrival: arrival, source: 'carrier_update' }),
             'carrier_update',
             'Carrier tracking shows a hold at the regional hub; ETA moved one day.',
             ts(-1, 9),
@@ -372,35 +307,21 @@ export function seedDatabase(db: DB, demoDate: string): void {
 
   const setMeta = db.prepare('INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)');
   setMeta.run('demo_date', demoDate);
-  setMeta.run('seed_version', '1');
+  setMeta.run('seed_version', SEED_VERSION);
   setMeta.run('seeded_at', new Date().toISOString());
 
   assertIntegrity(db);
 }
 
-/** Splits link quantities so the first portion totals `firstQty`; a link may span both. */
-function distribute(links: LinkSpec[], firstQty: number): [LinkSpec[], LinkSpec[]] {
-  const first: LinkSpec[] = [];
-  const rest: LinkSpec[] = [];
-  let remaining = firstQty;
-  for (const link of links) {
-    const take = Math.min(link.qty, remaining);
-    remaining -= take;
-    if (take > 0) first.push({ wo: link.wo, qty: take });
-    if (link.qty - take > 0) rest.push({ wo: link.wo, qty: link.qty - take });
-  }
-  return [first, rest];
-}
-
 function schedule(
   category: Category,
-  earliestStart: string,
+  productionStart: string,
   demoDate: string,
-  rng: ReturnType<typeof createRng>,
+  rng: Rng,
 ): { state: 'planned' | 'in_transit' | 'received'; arrival: string | null } {
   const D = (days: number) => addDays(demoDate, days);
   const beforeStart = (maxLead: number) => {
-    const candidate = addDays(earliestStart, -rng.int(1, maxLead));
+    const candidate = addDays(productionStart, -rng.int(1, maxLead));
     return candidate < D(1) ? D(1) : candidate;
   };
   switch (category) {
@@ -415,7 +336,7 @@ function schedule(
     case 'received':
       return { state: 'received', arrival: D(-rng.int(2, 25)) };
     case 'late':
-      return { state: rng.next() < 0.2 ? 'in_transit' : 'planned', arrival: addDays(earliestStart, rng.int(2, 12)) };
+      return { state: rng.next() < 0.2 ? 'in_transit' : 'planned', arrival: addDays(productionStart, rng.int(2, 12)) };
     case 'unknown':
       return { state: 'planned', arrival: null };
     case 'overdue':
@@ -423,7 +344,7 @@ function schedule(
   }
 }
 
-/** Throws if the dataset breaks a quantity or destination rule. Used after seeding and in tests. */
+/** Throws if the dataset breaks a quantity or relationship rule. Used after seeding and in tests. */
 export function assertIntegrity(db: DB): void {
   const fail = (message: string, rows: unknown[]) => {
     if (rows.length) throw new Error(`Seed integrity: ${message}: ${JSON.stringify(rows.slice(0, 3))}`);
@@ -439,39 +360,17 @@ export function assertIntegrity(db: DB): void {
       .all(),
   );
   fail(
-    'work-order link quantity differs from active delivery links',
-    db
-      .prepare(
-        `SELECT k.id, k.quantity, COALESCE(SUM(CASE WHEN d.superseded_at IS NULL THEN dl.quantity END), 0) AS assigned
-         FROM work_order_links k
-         LEFT JOIN delivery_links dl ON dl.work_order_link_id = k.id
-         LEFT JOIN deliveries d ON d.id = dl.delivery_id
-         GROUP BY k.id HAVING assigned <> k.quantity`,
-      )
-      .all(),
-  );
-  fail(
-    'delivery links exceed delivery quantity',
-    db
-      .prepare(
-        `SELECT d.id FROM deliveries d JOIN delivery_links dl ON dl.delivery_id = d.id
-         GROUP BY d.id HAVING SUM(dl.quantity) > d.quantity`,
-      )
-      .all(),
-  );
-  fail(
     'work order warehouse differs from PO destination',
     db
       .prepare(
-        `SELECT k.id FROM work_order_links k
-         JOIN po_lines l ON l.id = k.po_line_id JOIN purchase_orders p ON p.id = l.po_id
-         JOIN work_orders w ON w.id = k.work_order_id WHERE w.warehouse_id <> p.warehouse_id`,
+        `SELECT p.id FROM purchase_orders p JOIN work_orders w ON w.id = p.work_order_id
+         WHERE w.warehouse_id <> p.warehouse_id`,
       )
       .all(),
   );
   fail(
-    'work order without linked PO item',
-    db.prepare('SELECT w.id FROM work_orders w WHERE NOT EXISTS (SELECT 1 FROM work_order_links k WHERE k.work_order_id = w.id)').all(),
+    'work order without a PO',
+    db.prepare('SELECT w.id FROM work_orders w WHERE NOT EXISTS (SELECT 1 FROM purchase_orders p WHERE p.work_order_id = w.id)').all(),
   );
   fail(
     'supplier without PO',

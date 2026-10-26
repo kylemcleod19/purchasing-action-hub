@@ -1,5 +1,5 @@
 // Display labels. PRD §5 vocabulary lives here so wording can change in one place.
-import type { AttentionReason, DeliveryState, LinkStatus, UpdateSource } from './types.js';
+import type { AttentionReason, DateStatus, DeliveryState, UpdateSource } from './types.js';
 
 export const DELIVERY_STATE_LABELS: Record<DeliveryState, string> = {
   planned: 'Planned delivery',
@@ -15,7 +15,7 @@ export const ATTENTION_LABELS: Record<AttentionReason, string> = {
   none: 'No identified date issue',
 };
 
-export const LINK_STATUS_LABELS: Record<LinkStatus, string> = {
+export const DATE_STATUS_LABELS: Record<DateStatus, string> = {
   late: 'Late',
   unknown: 'Date unknown',
   no_conflict: 'No date conflict',
@@ -27,7 +27,7 @@ export const SOURCE_LABELS: Record<UpdateSource | 'po_schedule', string> = {
   supplier_call: 'Supplier call',
   carrier_update: 'Carrier update',
   other: 'Other',
-  po_schedule: 'PO schedule',
+  po_schedule: 'Initial PO schedule',
 };
 
 export function sourceLabel(source: string | null): string {
@@ -45,4 +45,4 @@ export const EVENT_LABELS: Record<string, string> = {
 };
 
 export const PROCESSING_TIME_NOTE =
-  'Date checks compare expected arrival with production start only. Receiving and inspection time are not modeled, so an arrival on the start date is not flagged.';
+  'Date checks compare expected arrival with the work order’s production start only. All material is assumed needed at start. Receiving and inspection time are not modeled, so an arrival on the start date is not flagged.';

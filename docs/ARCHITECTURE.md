@@ -45,18 +45,16 @@ Use IDs and foreign keys, plus timestamps where needed:
 | suppliers | id, name |
 | warehouses | id, name |
 | work_orders | id, number, program, warehouse_id, production_start |
-| purchase_orders | id, number, supplier_id, warehouse_id, buyer, status |
+| purchase_orders | id, number, supplier_id, warehouse_id, work_order_id NOT NULL, buyer, status |
 | po_lines | id, po_id, part_number, description, unit, ordered_qty |
-| work_order_links | id, po_line_id, work_order_id, quantity |
 | deliveries | id, po_line_id, quantity, state, expected_arrival nullable, source, updated_at, version, superseded_at nullable |
-| delivery_links | delivery_id, work_order_link_id, quantity |
 | follow_ups | id, po_id, delivery_id nullable, due_date, note, state, completion_note, completed_at, version |
 | change_history | id, po_id, delivery_id nullable, event_type, before_json, after_json, source, note, created_at |
 | app_metadata | key, value (schema/seed version and demo reference date) |
 
-work_order_links are seeded upstream commitments; no editing API. delivery_links distribute those fixed quantities across dated deliveries. Verify matching PO line on every link. Keep superseded delivery rows for history, but exclude them from current totals.
+Each purchase_order has one required work_order_id foreign key. Multiple POs may reference the same work order. All PO items and deliveries inherit this relationship through the PO; do not create work_order_links or delivery_links allocation tables. Verify PO and work order warehouse consistency. Seed 20 work orders for 25 POs as specified in PRD.md. Keep superseded deliveries for history but exclude them from current totals. API responses include work-order number and production_start for the PO and each incoming row.
 
-On split, transactionally supersede the original, create child deliveries and links, reattach any open delivery-level follow-ups to the PO level with original context preserved, and append history. Do not delete historical follow-ups.
+On split, transactionally supersede the original, create child deliveries under the same PO item, reattach any open delivery-level follow-ups to the PO level with original context preserved, and append history. Do not delete historical follow-ups.
 
 Use a version precondition on each mutation; return HTTP 409 for stale edits. A split can only consume an active source row once. Reset is transactional and explicitly initiated; it is never part of normal startup.
 
@@ -65,7 +63,7 @@ A compact JSON API is enough:
 - GET /api/incoming: current delivery rows, calculated attention, follow-up summaries.
 - GET /api/purchase-orders/:id: detail, work-order impacts, history, tasks.
 - PATCH /api/deliveries/:id: arrival/source/note and expected version.
-- POST /api/deliveries/:id/split: child quantities/dates/link distributions and expected version.
+- POST /api/deliveries/:id/split: child quantities/dates and expected version.
 - POST /api/purchase-orders/:id/follow-ups
 - PATCH /api/follow-ups/:id: edit/complete with expected version.
 - POST /api/demo/reset: reset confirmation, available only in DEMO_MODE.
@@ -149,3 +147,6 @@ Keep rule functions and display labels easy to locate for live interview modific
 ## 11. First instruction to Claude
 Read docs/PRD.md and docs/ARCHITECTURE.md. Initialize this fresh repository using the recommended defaults. First provide a short implementation sequence, then implement the first working slice: persisted seed data, Incoming items, and PO detail. Continue through the specified slices without adding workflows. Keep the old project's requirements out of this repo. Finish with build/test results and Railway setup status. Ask only when a material product decision blocks progress.
 
+
+## 12. Existing implementation alignment
+If the initial multi-work-order schema has already been built, replace its allocation joins/UI with the single required PO work_order_id relationship. For this synthetic demo, use an explicit versioned demo-data migration/reset with the changed seed; do not arbitrarily pick a work order from conflicting legacy links or silently discard edits at every startup. Document the one-time reset. Preserve Railway configuration and unrelated working features.

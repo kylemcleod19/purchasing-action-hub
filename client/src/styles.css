@@ -436,7 +436,39 @@ table {
 }
 
 .po-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
   margin-bottom: 8px;
+}
+
+.work-order-callout {
+  display: flex;
+  gap: 24px;
+  margin: 0;
+  padding: 10px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+
+.work-order-callout dt {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.work-order-callout dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.production-start {
+  font-size: 18px;
 }
 
 .context {
@@ -475,15 +507,6 @@ table {
 .tabs button {
   border-radius: 4px 4px 0 0;
   margin-bottom: -1px;
-}
-
-.po-line h2 {
-  margin-top: 16px;
-}
-
-.qty-breakdown {
-  margin: 0 0 6px;
-  font-size: 13px;
 }
 
 .history {
@@ -606,5 +629,82 @@ table {
 
 .qty-input {
   width: 80px;
+  text-align: right;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.date-col {
+  white-space: nowrap;
+}
+
+.supplementary {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.source-icon {
+  vertical-align: -2px;
+  color: var(--muted);
+}
+
+.last-update {
+  cursor: help;
+}
+
+.group-header {
+  text-align: center !important;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.items-table > tbody > tr.detail-row > td {
+  padding: 4px 8px 12px 36px;
+}
+
+.deliveries-table {
+  background: var(--surface);
+}
+
+.detail-table th[scope='row'] {
+  white-space: nowrap;
+  width: 1%;
+  padding-right: 16px;
+}
+
+.po-header > div:first-child {
+  flex: 1 1 480px;
+}
+
+.supplementary {
+  display: block;
+}
+
+.incoming-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.incoming-actions > * + * {
+  margin-left: 0;
+}
+
+.incoming-actions .button {
+  text-align: center;
+}
+
+.data-table td.num,
+.compact td.num {
   text-align: right;
 }

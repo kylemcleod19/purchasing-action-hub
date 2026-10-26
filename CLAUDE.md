@@ -4,6 +4,8 @@ Supplier delivery tracking prototype for a fictional interview case. Read `docs/
 and `docs/ARCHITECTURE.md` (stack, persistence, deployment). They are the authority. Do not duplicate them here.
 
 ## Scope guardrails
+- Each PO has exactly one work order (`purchase_orders.work_order_id`); items and deliveries inherit it.
+  Do not reintroduce work-order allocation tables or split allocation grids.
 - Two views only: Incoming items and PO detail (Deliveries / Follow-ups). No separate work-order, supplier,
   task, inventory, or dashboard modules.
 - Excluded: PO creation/approval, sourcing, replenishment, capacity, receiving/QA, inventory, freight,

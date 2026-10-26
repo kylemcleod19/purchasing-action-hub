@@ -5,8 +5,10 @@ direct-material deliveries may delay production, which work orders are affected,
 follow up on. They can record agreed arrival changes and delivery splits.
 
 - **Two connected views:** Incoming items (landing page) and Purchase-order detail (Deliveries / Follow-ups tabs).
-- **Actions that persist:** expected-arrival updates (date or unknown, source, note), splits of planned
-  deliveries with explicit work-order assignment, supplier follow-ups, change history, and demo reset.
+- **One work order per PO:** each PO belongs to exactly one work order, and its items and deliveries
+  inherit that work order's production start. A work order may have several POs.
+- **Actions that persist:** expected-arrival updates (date or unknown, source, optional note), splits of
+  planned deliveries into dated quantities, supplier follow-ups, change history, and demo reset.
 - **Synthetic data only.** All visitors share one dataset. No emails, PO amendments, supplier messages,
   or integrations of any kind.
 
@@ -35,6 +37,13 @@ npm run dev             # Vite on http://localhost:5173, proxying /api to the AP
 The first start creates `data/demo.sqlite`, applies migrations, and seeds the baseline. Later starts
 keep existing data and never reseed or shift dates.
 
+**One-time v2 data reset.** Migration `002_po_single_work_order.sql` replaces the original multi-work-order
+allocation schema (`work_order_links`, `delivery_links`) with a required `purchase_orders.work_order_id`.
+The old allocations can't be mapped to one work order per PO without arbitrary choices. So the first time a
+v1 database starts on this version, the migration drops the synthetic demo data and the v2 baseline is
+seeded with a new demo date. Edits made in v1 are discarded once. The migration is recorded in
+`schema_migrations` and never runs again, so later edits persist normally.
+
 | Command | What it does |
 |---|---|
 | `npm run dev` | API (tsx watch) and Vite dev server together |
@@ -57,27 +66,33 @@ every visitor.
 
 ## Primary demo (about 3 minutes)
 
-The demo records are PO **PO-DEMO-01** (part HX-2210, 100 EA) and work orders **WO-DEMO-A** (40 units,
-starts D+7) and **WO-DEMO-B** (60 units, starts D+14). D is the demo date.
+The demo records are PO **PO-DEMO-01** (part HX-2210, 100 EA) for work order **WO-DEMO-A**, which has a
+production start of D+7. D is the demo date.
 
-1. On **Incoming items**, choose **All outstanding** and search `PO-DEMO-01`. Its expected arrival is
-   D+5, which shows no identified date issue.
-2. Click **Update arrival**, enter D+16 with source *Supplier email* and a note, and save. The row moves
-   to **Needs attention** as *Late* with 2 late WOs. Expanding it shows A late 40 and B late 60.
-3. Click **Open PO** and then **Split**. Enter delivery 1: 40 at D+6, delivery 2: 60 at D+16. In the
-   grid, assign WO-DEMO-A 40 to delivery 1 and WO-DEMO-B 60 to delivery 2. The preview shows A with
-   no date conflict and B late. Save.
-4. The PO shows two deliveries. The 40 has no identified date issue and the 60 shows late 60. The line
-   still reads *Ordered 100 = Planned 100 + In transit 0 + Received 0*.
+1. On **Incoming items**, choose **All outstanding** and search `PO-DEMO-01`. The expected arrival (D+5)
+   sits next to the production start (D+7), and the row shows no identified date issue.
+2. Click **Update arrival**, enter D+16 with source *Supplier email*, leave the note blank, and save. All
+   100 units are now *Late*, with "9 days after start" beneath the date. Last update shows today with an
+   envelope icon.
+3. Click **Open PO**. The header shows WO-DEMO-A and the production start. Click **Split** on the delivery
+   and enter 40 at D+6 and 60 at D+16. The preview shows the 40 with no date conflict and the 60 late.
+   Save.
+4. The item row reads Ordered 100, Planned 100, In transit 0, Received 0, Late 60. Its expanded delivery
+   table shows the 40 with no identified date issue and the 60 as *Late*. WO-DEMO-A remains at risk,
+   because all material is needed at start.
 5. Add a follow-up on the 60-unit delivery. On the **Follow-ups** tab, complete it. Back on
-   **Deliveries**, B is still late 60, because completing a task never changes dates or clears risk.
-6. Refresh the page (a direct PO URL) and the changes persist. Use **Reset demo data** to restore the
-   baseline.
+   **Deliveries**, the 60 is still late and its Last update has not changed, because completing a task
+   never changes dates or clears risk.
+6. Try the delivery-state filter (for example *In transit* shows an empty state, and the item totals
+   never change). Refresh the page and the changes and the filter persist. Use **Reset demo data** to
+   restore the baseline.
 
-The seed also includes these examples: arrival before production start, known late arrival, missing
-expected arrival, arrival overdue with no receipt, follow-up due with an otherwise timely arrival
-(PO-24107), an in-transit delivery with a carrier-sourced manual update (PO-24111), and received lines
-shown read-only.
+The seed has 20 work orders: five have two POs and fifteen have one. It also includes these examples:
+arrival before production start, known late arrival, missing expected arrival, arrival overdue with no
+receipt, follow-up due with an otherwise timely arrival (PO-24107), an in-transit delivery with a
+carrier-sourced manual update (PO-24111), PO items with two deliveries on different dates, and received
+lines shown read-only. Other seeded deliveries show *Initial PO schedule* as their Last update source,
+because no supplier email or call is invented.
 
 ## Rules worth knowing
 
@@ -86,14 +101,17 @@ shown read-only.
 - *Late* means the expected arrival is later than the linked production start. Arriving on the start
   date is not flagged. Receiving and inspection time are not modeled, and the UI says so.
 - An unknown date is never treated as on time. Received deliveries carry no active date alerts.
-- Each delivery-to-work-order link is evaluated separately. Work-order totals show late and unknown
-  quantities separately.
+- Each delivery is evaluated against its PO's single work-order production start. Each PO item shows
+  late and unknown-date quantities separately, and quantities of different parts are never summed.
 - Attention order is: date conflict, arrival overdue, date unknown, follow-up due, no identified date
-  issue. Within each group, rows are sorted by earliest affected production start, with unknown starts
-  last. This is a simple demo ordering rule, not an optimized priority.
+  issue. Within each group, rows are sorted by the PO's production start, with unknown starts last. This
+  is a simple demo ordering rule, not an optimized priority.
+- *Last update* is the date and source of the latest arrival-information change. It is not a delivery
+  date, and follow-ups never change it.
 - Every mutation uses a version precondition and runs in one transaction. Stale or repeated submits
-  get HTTP 409 and change nothing. Only planned deliveries can be split. A split keeps the original
-  row (superseded) for history and moves open delivery-level follow-ups to the PO level.
+  get HTTP 409 and change nothing. Only planned deliveries can be split. Split deliveries stay on the
+  same PO item and work order. The original row is kept (superseded) for history, and open
+  delivery-level follow-ups move to the PO level.
 
 The rule functions are in [shared/impact.ts](shared/impact.ts) and the display wording is in
 [shared/labels.ts](shared/labels.ts).

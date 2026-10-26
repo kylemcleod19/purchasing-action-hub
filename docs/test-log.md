@@ -18,6 +18,17 @@ behaves as specified. They do not validate buyer needs.
 | Arrival edit, then `docker restart`: edit kept, log says "existing data kept" (no reseed) | Pass |
 | Container removed and recreated on the same volume (simulated redeploy): edit kept | Pass |
 
+## 2026-10-26: v2 alignment with the updated PRD/ARCHITECTURE (single work order per PO)
+
+| Check | Result |
+|---|---|
+| `npm run build` | Pass |
+| `npm test`: 33 Vitest tests, adding coverage for the 20-WO/25-PO seed shape (5 WOs with two POs), no allocation tables, rows inheriting the PO work order and start, blank-note arrival update, split deliveries keeping PO item and work order, follow-up completion not changing Last update, and the v1→v2 migration (resets once, later edits persist) | 33 passed |
+| Migration 002 on a copy of the real local v1 database (40 WOs, 130 links, edits): migrated to 20 WOs / 25 POs / 80 lines; second start did not reseed | Pass |
+| `npm run test:e2e`, test 1: primary demo with adjacent Expected arrival / Production start columns, a blank note, source icons, header work order and start, split with no allocation UI, item totals in columns, Last update unchanged by follow-up, state filter empty state and preserved filter after reload | Pass |
+| `npm run test:e2e`, test 2: a 10-item PO renders as one table with 10 rows, Enter-key expansion with `aria-expanded`, and multiple rows open at once | Pass |
+| `docker build`: image contains `001_init.sql` and `002_po_single_work_order.sql`; a fresh volume seeds the v2 baseline; health 200; direct PO URL 200 | Pass |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:
