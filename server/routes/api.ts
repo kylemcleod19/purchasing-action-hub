@@ -8,8 +8,8 @@ import { loadDeliveryRows, loadFilterOptions } from '../services/incoming.js';
 import { getPurchaseOrderDetail } from '../services/purchaseOrder.js';
 import { resolveIssue, splitDelivery, updateArrival } from '../services/deliveries.js';
 import { createFollowUp, patchFollowUp } from '../services/followUps.js';
-import { getOutreachPreview, sendOutreach } from '../services/outreach.js';
-import { processSupplierReply } from '../services/replies.js';
+import { getOutreachPreview, previewRequestEmail, sendOutreach } from '../services/outreach.js';
+import { previewReply, processSupplierReply } from '../services/replies.js';
 import { processCarrierEvent } from '../services/carrier.js';
 import { advanceClock, clockTarget, getScenarios } from '../services/simulation.js';
 import { patchCallTask } from '../services/callTasks.js';
@@ -110,6 +110,17 @@ export function apiRouter(db: DB, options: { demoMode: boolean }): Router {
   router.get('/demo/scenarios', (_req, res) => {
     requireDemo();
     res.json(getScenarios(db));
+  });
+
+  // Read-only email previews: the request a send would create, or a seeded reply as a sample.
+  router.get('/demo/email-preview/request/:supplierId', (req, res) => {
+    requireDemo();
+    res.json(previewRequestEmail(db, idParam(req.params.supplierId)));
+  });
+
+  router.get('/demo/email-preview/reply/:fixtureId', (req, res) => {
+    requireDemo();
+    res.json(previewReply(db, keyParam(req.params.fixtureId)));
   });
 
   router.post('/demo/outreach/send', (req, res) => {

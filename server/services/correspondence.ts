@@ -1,6 +1,7 @@
 // Read-only views of simulated correspondence, call tasks, and carrier events for PO detail. A
 // cross-PO request or task appears identically from either PO, with all of its items.
 import type { DB } from '../db/db.js';
+import { buyerAddress, supplierAddress } from './outreach.js';
 import type {
   CallTaskView,
   CarrierEventView,
@@ -38,16 +39,21 @@ export function getCorrespondence(db: DB, poId: number): OutreachRequestView[] {
       )
       .get(id) as Omit<OutreachRequestView, 'items' | 'messages'>;
     const items = db.prepare(`${ITEM_SQL} WHERE oi.request_id = ? ORDER BY p.number, l.line_no, oi.id`).all(id) as OutreachItemView[];
+    const buyer = (db.prepare('SELECT buyer FROM purchase_orders WHERE id = ?').get(items[0].poId) as { buyer: string }).buyer;
+    const buyerSide = buyerAddress(buyer);
+    const supplierSide = `${request.supplierName} <${supplierAddress(request.supplierName)}>`;
     const messages = (
       db
         .prepare(
-          `SELECT id, direction, recipient, subject, body, sent_or_received_at AS at, processing_state AS processingState
+          `SELECT id, direction, recipient, subject, body, sent_or_received_at AS at, processing_state AS processingState, fixture_key AS fixtureKey
            FROM supplier_messages WHERE request_id = ? ORDER BY sent_or_received_at, id`,
         )
-        .all(id) as Omit<SupplierMessageView, 'results'>[]
+        .all(id) as Omit<SupplierMessageView, 'results' | 'from' | 'to'>[]
     ).map(
       (m): SupplierMessageView => ({
         ...m,
+        from: m.direction === 'outbound' ? buyerSide : supplierSide,
+        to: m.direction === 'outbound' ? supplierSide : buyerSide,
         results: db
           .prepare(
             `SELECT id, outreach_item_id AS outreachItemId, classification, date_type AS dateType, proposed_date AS proposedDate,

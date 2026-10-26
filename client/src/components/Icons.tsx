@@ -27,10 +27,20 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS;
 
+/** With an empty label the icon is decorative (hidden from assistive tech), e.g. beside a text label. */
 export function Icon({ name, label, className }: { name: IconName; label: string; className?: string }) {
+  const decorative = label === '';
   return (
-    <svg className={`icon icon-${name}${className ? ` ${className}` : ''}`} viewBox="0 0 16 16" width="14" height="14" role="img" aria-label={label}>
-      <title>{label}</title>
+    <svg
+      className={`icon icon-${name}${className ? ` ${className}` : ''}`}
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      role={decorative ? undefined : 'img'}
+      aria-label={decorative ? undefined : label}
+      aria-hidden={decorative ? true : undefined}
+    >
+      {!decorative && <title>{label}</title>}
       <path d={PATHS[name]} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );

@@ -371,7 +371,13 @@ test('tracking from the normal seed, destination/program filters, and URL round-
   await expect(incomingRows(page).first()).toHaveClass(/\brow-late\b/);
 });
 
-test('Case A in the browser: preview, send, partial reply, deadline call task, clarifying reply', async ({ page }) => {
+const scenarioState = async (page: Page) => (await (await page.request.get('/api/demo/scenarios')).json()) as {
+  cases: { steps: { key: string; done: boolean }[]; extras: { key: string; done: boolean }[] }[];
+};
+const doneKeys = async (page: Page) =>
+  (await scenarioState(page)).cases.flatMap((c) => [...c.steps, ...c.extras]).filter((s) => s.done).map((s) => s.key);
+
+test('supplier scenario: purpose and next action up front, read-only emails, progress survives tabs and reload', async ({ page }) => {
   await resetDemo(page);
   await page.goto('/');
   // Demo scenarios is its own page, linked beside Incoming items.
@@ -379,73 +385,162 @@ test('Case A in the browser: preview, send, partial reply, deadline call task, c
   await expect(nav.getByRole('link')).toHaveText(['Incoming items', 'Demo scenarios']);
   await nav.getByRole('link', { name: 'Demo scenarios' }).click();
   await expect(page).toHaveURL(/\/demo-scenarios$/);
-  await expect(nav.getByRole('link', { name: 'Demo scenarios' })).toHaveClass(/active/);
-  const scenarios = page.getByRole('region', { name: 'Demo scenarios' });
-  await expect(scenarios.getByRole('heading', { level: 1 })).toHaveText('Demo scenarios');
-  await expect(scenarios).toContainText('Simulated AI reply processing');
-  const caseA = scenarios.getByRole('region', { name: /Case A/ });
-  await expect(caseA.locator('table').first().locator('tbody tr')).toHaveCount(8);
-  await expect(caseA).toContainText('Usable carrier tracking');
+  await expect(page.getByText('Simulated emails and carrier events; no messages are sent.')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Supplier email follow-up' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Request arrival confirmations, process a partial reply, and escalate unanswered items to purchasing.')).toBeInViewport();
 
-  await caseA.getByRole('button', { name: 'Simulate send' }).click();
-  await expect(scenarios.getByRole('status')).toContainText('with 8 items');
-  await caseA.getByRole('button', { name: 'Supplier reply (partial)' }).click();
-  await expect(scenarios.getByRole('status')).toContainText('6 applied, 1 need review, 1 not mentioned');
-  await expect(caseA.locator('.results-table')).toContainText('Ship date only');
-  await caseA.getByRole('button', { name: /Advance to response deadline/ }).click();
-  await expect(scenarios.getByRole('status')).toContainText('1 call tasks created');
-  const task = caseA.locator('.call-tasks-table tbody tr[data-call-task]');
-  await expect(task).toContainText('Open');
-  await expect(task.locator('table.nested tr')).toHaveCount(2);
-  await caseA.getByRole('button', { name: 'Clarifying reply' }).click();
-  await expect(scenarios.getByRole('status')).toContainText('2 applied');
-  await expect(task).toContainText('Answered by supplier');
-  await nav.getByRole('link', { name: 'Incoming items' }).click();
+  const toolbar = page.locator('.scenario-toolbar');
+  const primary = toolbar.locator('button.primary');
+  const current = toolbar.locator('[aria-current="step"]');
+  await expect(current).toContainText('Request confirmation');
+  await expect(primary).toHaveText('Simulate sending request');
+  await expect(primary).toBeInViewport();
+  const items = page.locator('.supplier-items tbody tr');
+  await expect(items).toHaveCount(8);
+  await expect(items.first()).toContainText('Selected');
+  await page.getByText(/Why other items weren’t contacted/).click();
+  await expect(page.locator('.scenario-section').first()).toContainText('Usable carrier tracking');
 
-  // The revised lines now need action in Incoming; the PO shows correspondence and the task.
-  await page.getByLabel('Search PO, part, or supplier').fill('PO-24116');
-  await expect(incomingRows(page)).toHaveCount(1);
-  await incomingRows(page).getByRole('link', { name: 'PO-24116' }).click();
+  // Email previews are read-only and labeled as samples.
+  await toolbar.getByRole('button', { name: 'Preview request email' }).click();
+  await expect(modal(page)).toContainText('Preview: this request has not been sent.');
+  await expect(modal(page).locator('.email-headers')).toContainText('orders@kestrel-precision-machining.example.com');
+  await expect(modal(page).locator('.message-body')).toContainText('Please confirm the expected arrival dates at our warehouse below');
+  await modal(page).locator('.form-actions').getByRole('button', { name: 'Close' }).click();
+  await toolbar.getByRole('button', { name: 'Preview sample reply' }).click();
+  await expect(modal(page)).toContainText('Sample reply: a seeded fixture, shown before processing. It has not arrived.');
+  await expect(modal(page).locator('.message-body')).toContainText('should ship Friday');
+  await page.keyboard.press('Escape');
+  expect(await doneKeys(page)).toEqual([]);
+
+  await primary.click();
+  await expect(toolbar.getByRole('status')).toContainText('for 8 items');
+  await expect(current).toContainText('Process partial reply');
+  await expect(primary).toHaveText('Process supplier reply');
+  await expect(toolbar.getByRole('button', { name: 'View sent email' })).toBeVisible();
+  await expect(items.first()).toContainText('No reply');
+
+  // A failed operation reports the error and does not advance the step.
+  await page.route('**/api/demo/supplier-replies/**', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"Simulated failure."}' }));
+  await primary.click();
+  await expect(toolbar.getByRole('alert')).toContainText('Simulated failure. Nothing was changed.');
+  await expect(current).toContainText('Process partial reply');
+  await page.unroute('**/api/demo/supplier-replies/**');
+
+  await primary.click();
+  await expect(toolbar.getByRole('status')).toContainText('6 updated, 1 need clarification, 1 not mentioned');
+  await expect(current).toContainText('Reach follow-up deadline');
+  const statuses = await page.locator('.supplier-items tbody tr td:nth-child(6)').allInnerTexts();
+  expect(statuses.filter((s) => s === 'Confirmed')).toHaveLength(4);
+  expect(statuses.filter((s) => s === 'Revised')).toHaveLength(2);
+  expect(statuses.filter((s) => s === 'Needs clarification')).toHaveLength(1);
+  expect(statuses.filter((s) => s === 'No reply')).toHaveLength(1);
+  await expect(page.locator('.supplier-items').getByRole('link', { name: /^Delivery issue:/ })).toHaveCount(2);
+  await expect(page.getByTestId('supplier-summary')).toHaveText('Confirmed 4 · Revised 2 · Needs clarification 1 · No reply 1');
+  const before = await doneKeys(page);
+  await page.locator('.results-heading').getByRole('button', { name: 'View supplier reply' }).click();
+  await expect(modal(page)).toContainText('Simulated email. Nothing was sent or received.');
+  await expect(modal(page).locator('.email-headers')).toContainText('Kestrel Precision Machining');
+  await page.keyboard.press('Escape');
+  expect(await doneKeys(page)).toEqual(before);
+
+  // Tab switches and reload restore progress from the server; nothing runs.
+  await page.getByRole('tab', { name: 'Carrier tracking updates' }).click();
+  await expect(page).toHaveURL(/scenario=carrier/);
+  await expect(current).toContainText('Apply carrier delay');
+  await page.getByRole('tab', { name: 'Supplier email follow-up' }).click();
+  await expect(current).toContainText('Reach follow-up deadline');
+  await page.reload();
+  await expect(current).toContainText('Reach follow-up deadline');
+  expect(await doneKeys(page)).toEqual(before);
+
+  await expect(primary).toHaveText(/^Advance clock to /);
+  await primary.click();
+  await expect(toolbar.getByRole('status')).toContainText('1 call tasks created');
+  await expect(page.locator('.supplier-items').getByRole('link', { name: /^Call task #\d+$/ })).toHaveCount(2);
+  await expect(toolbar.getByRole('link', { name: /Call task #\d+ · Open/ })).toBeVisible();
+  await expect(primary).toHaveText('Process clarification email');
+  await primary.click();
+  await expect(toolbar.getByRole('status')).toContainText('2 updated');
+  await expect(toolbar).toContainText('All steps complete');
+  await expect(page.getByTestId('supplier-summary')).toContainText('Answered by supplier');
+  await toolbar.getByRole('button', { name: 'View clarification email' }).click();
+  await expect(modal(page).locator('.message-body')).toContainText('Following up on the two open items');
+  await page.keyboard.press('Escape');
+
+  // The past-date confirmation stays available under Additional test cases.
+  await page.getByText('Additional test cases').click();
+  await page.getByRole('button', { name: 'Process past-date confirmation' }).click();
+  await expect(toolbar.getByRole('status')).toContainText('1 updated');
+
+  // The PO shows the same correspondence, with the email in the panel.
+  await page.goto('/?q=PO-24116');
+  await incomingRows(page).getByRole('link', { name: 'PO-24116' }).first().click();
   await page.getByRole('button', { name: /Supplier correspondence \(1\)/ }).click();
-  await expect(page.locator('.correspondence')).toContainText('Revised arrival');
-  await expect(page.locator('.correspondence')).toContainText('PO-24105 line 1'); // cross-PO request, same view
-  await page.getByRole('tab', { name: /Follow-ups/ }).click();
-  await expect(page.locator('.call-tasks-table')).toContainText('Answered by supplier');
+  await expect(page.locator('.correspondence')).toContainText('PO-24105 line 1');
+  await page.locator('.correspondence').getByRole('button', { name: 'View sent email' }).click();
+  await expect(modal(page)).toContainText('Simulated email. Nothing was sent or received.');
 });
 
-test('Case B in the browser: one carrier delay, replay, older event, later delay, delivered not received', async ({ page }) => {
+test('carrier scenario: delay reaches linked rows only; carrier Delivered stays separate from warehouse Received', async ({ page }) => {
   const D = await resetDemo(page);
-  await page.goto('/');
-  await page.getByRole('navigation').getByRole('link', { name: 'Demo scenarios' }).click();
-  const scenarios = page.getByRole('region', { name: 'Demo scenarios' });
-  const caseB = scenarios.getByRole('region', { name: /Case B/ });
-  const status = scenarios.getByRole('status');
-  await caseB.getByRole('button', { name: /Carrier delay/ }).click();
-  await expect(status).toContainText('3 deliveries updated');
-  await caseB.getByRole('button', { name: /Replay the identical/ }).click();
-  await expect(status).toContainText('Duplicate event ID; nothing changed.');
-  await caseB.getByRole('button', { name: /Older, previously unseen/ }).click();
-  await expect(status).toContainText('ignored');
-  await caseB.getByRole('button', { name: /Later delay/ }).click();
-  await expect(status).toContainText('3 deliveries updated');
-  await expect(caseB.getByRole('button', { name: /Carrier reports Delivered/ })).toBeDisabled();
-  await caseB.getByRole('button', { name: /Advance clock to carrier delivery/ }).click();
-  await caseB.getByRole('button', { name: /Carrier reports Delivered/ }).click();
-  await expect(status).toContainText('applied');
+  await page.goto('/demo-scenarios?scenario=carrier');
+  await expect(page.getByRole('tab', { name: 'Carrier tracking updates' })).toHaveAttribute('aria-selected', 'true');
+  await expect(
+    page.getByText('Apply a shipment delay to its linked items while preserving unshipped quantities and warehouse receipt status.'),
+  ).toBeInViewport();
+  const toolbar = page.locator('.scenario-toolbar');
+  const primary = toolbar.locator('button.primary');
+  const status = toolbar.getByRole('status');
+  await expect(primary).toHaveText(`Apply carrier delay (ETA ${fmt(D(6))})`);
+  await expect(primary).toBeInViewport();
+  await expect(page.locator('.carrier-context')).toContainText('DEMO-TRACK-001');
+  const received = await page.getByTestId('warehouse-received').innerText();
 
-  const { rows } = await (await page.request.get('/api/incoming')).json();
-  const linked = rows.filter((r: { shipment: { trackingNumber: string } | null }) => r.shipment?.trackingNumber === 'DEMO-TRACK-001');
-  expect(linked).toHaveLength(3);
-  await page.goto(`/purchase-orders/${linked[0].poId}?item=${linked.find((r: { lineNo: number }) => r.lineNo === 1).poLineId}`);
+  const rows = page.locator('.carrier-items tbody tr');
+  const shipped = rows.filter({ hasText: 'SH-DEMO-01' });
+  const remainder = rows.filter({ hasText: 'Not shipped' });
+  await expect(shipped).toHaveCount(3);
+  await expect(remainder).toHaveCount(1);
+
+  await primary.click();
+  await expect(status).toContainText('3 deliveries updated');
+  for (const row of await shipped.all()) {
+    await expect(row.locator('td').nth(3)).toHaveText(fmt(D(1)));
+    await expect(row.locator('td').nth(4)).toContainText(fmt(D(6)));
+  }
+  await expect(remainder.locator('td').nth(3)).toHaveText('—');
+  await expect(remainder.locator('td').nth(4)).toContainText(fmt(D(2)));
+  await expect(page.getByTestId('carrier-summary')).toContainText('open issues 3');
+
+  await expect(primary).toHaveText(`Apply further delay (ETA ${fmt(D(8))})`);
+  await primary.click();
+  await expect(status).toContainText('3 deliveries updated');
+  await expect(primary).toHaveText(/^Advance clock to /);
+  await primary.click();
+  await expect(status).toContainText('Demo clock is now');
+  await expect(primary).toHaveText('Record carrier delivery');
+  await primary.click();
+  await expect(status).toContainText('applied');
+  await expect(toolbar).toContainText('All steps complete');
+  await expect(page.locator('.carrier-context')).toContainText('Delivered / receipt pending');
+  await expect(page.getByTestId('warehouse-received')).toHaveText(received);
+  await expect(shipped.first()).toContainText('Carrier: Delivered / receipt pending · Warehouse: Not received');
+  await expect(remainder.locator('td').nth(4)).toContainText(fmt(D(2)));
+
+  // Secondary checks remain available out of the main walkthrough.
+  await page.getByText('Additional test cases').click();
+  await page.getByRole('button', { name: 'Replay duplicate event' }).click();
+  await expect(status).toContainText('Duplicate event ID; nothing changed.');
+  await page.getByRole('button', { name: 'Process older event' }).click();
+  await expect(status).toContainText('ignored');
+  await page.getByText(/Carrier event log/).click();
+  await expect(page.locator('.scenario-section').filter({ hasText: 'Carrier event log' })).toContainText('ignored');
+
+  const { rows: incoming } = await (await page.request.get('/api/incoming')).json();
+  const line1 = incoming.find((r: { shipment: { trackingNumber: string } | null; lineNo: number }) => r.shipment?.trackingNumber === 'DEMO-TRACK-001' && r.lineNo === 1);
+  await page.goto(`/purchase-orders/${line1.poId}?item=${line1.poLineId}`);
   const item = page.locator('.items-table > tbody > tr.expanded');
   await expect(item.locator('td.num')).toHaveText(['1', '50', '30', '0']);
-  const shipped = trackingRows(page).filter({ hasText: 'DEMO-TRACK-001' });
-  await expect(shipped).toContainText(fmt(D(8)));
-  await expect(trackingRows(page).filter({ hasText: 'Not shipped' })).toContainText(fmt(D(2)));
-  await shipped.getByRole('button', { name: /Details for delivery/ }).click();
-  const details = page.locator('.deliveries-table .detail-row');
-  await expect(details).toContainText('Delivered / receipt pending');
-  await expect(details).toContainText('Receipt pending');
-  await expect(details.locator('.events-table')).toContainText('Ignored');
   await expect(manageButton(item)).toHaveClass(/needs-action/);
 });

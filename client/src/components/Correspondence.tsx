@@ -1,10 +1,12 @@
 // Simulated supplier correspondence and call tasks (PRD §13 "UI and acceptance additions"). Email
 // bodies are readable text; requested items and extracted results are tables. A cross-PO request or
 // task shows identically from either PO.
+import { useState } from 'react';
 import { formatClock } from '../../../shared/clock';
 import { formatDate } from '../../../shared/dates';
 import { CALL_TASK_STATE_LABELS, CLASSIFICATION_LABELS, RESPONSE_STATE_LABELS, SIMULATION_LABEL } from '../../../shared/labels';
 import type { CallTaskView, OutreachItemView, OutreachRequestView, SupplierMessageView } from '../../../shared/types';
+import { EmailButton, EmailModal } from './EmailPanel';
 
 const itemLabel = (i: Pick<OutreachItemView, 'poNumber' | 'lineNo'>) => `${i.poNumber} line ${i.lineNo}`;
 
@@ -40,6 +42,8 @@ function RequestedItems({ items }: { items: OutreachItemView[] }) {
 
 function Message({ message, items }: { message: SupplierMessageView; items: OutreachItemView[] }) {
   const itemFor = (id: number | null) => items.find((i) => i.id === id);
+  const [open, setOpen] = useState(false);
+  const outbound = message.direction === 'outbound';
   return (
     <div className={`message message-${message.direction}`}>
       <p className="message-meta">
@@ -47,10 +51,14 @@ function Message({ message, items }: { message: SupplierMessageView; items: Outr
         {formatClock(message.at)}
         {message.recipient && <> · to {message.recipient}</>} · {message.subject}
       </p>
-      <details>
-        <summary>Message text</summary>
-        <pre className="message-body">{message.body}</pre>
-      </details>
+      <EmailButton label={outbound ? 'View sent email' : 'View supplier reply'} onClick={() => setOpen(true)} />
+      {open && (
+        <EmailModal
+          title={outbound ? 'Sent request email' : 'Supplier reply'}
+          email={{ from: message.from, to: message.to, subject: message.subject, at: message.at, body: message.body, sample: false }}
+          onClose={() => setOpen(false)}
+        />
+      )}
       {message.results.length > 0 && (
         <table className="compact results-table">
           <caption>{SIMULATION_LABEL}: extracted results</caption>

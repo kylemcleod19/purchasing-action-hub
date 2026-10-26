@@ -94,6 +94,18 @@ Not run for this revision: `docker build`, container restart and redeploy persis
 | Browser (10-item PO with an item holding three open issues): rows stay in line order 1–10; Line shows `aria-sort="ascending"`; Ordered sorts ascending then descending, survives reload, and a third click restores line order; Line toggles 10→1 and back; the Ordered tooltip is kept | Pass (`npm run test:e2e`: 5 passed, run twice) |
 | `npm run build` | Pass |
 
+## 2026-10-26: Demo scenarios page cleanup (tabs, progression toolbar, email panel)
+
+| Check | Result |
+|---|---|
+| `npm run typecheck`, `npm run build` | Pass |
+| `npm test`: existing API tests still pass with the reshaped scenario steps (deadline step now waits for the partial reply) | 67 passed |
+| Browser, supplier tab: purpose and primary action in the viewport on entry; step indicator moves through the four steps; *Preview request email* and *Preview sample reply* open labeled samples and leave scenario state unchanged (checked through `/api/demo/scenarios` before and after); a 500 from the reply endpoint shows an error and keeps the step; results table shows Confirmed 4 / Revised 2 / Needs clarification 1 / No reply 1 with two delivery-issue links, then call-task links after the deadline; tab switch and reload keep progress and run nothing; *View supplier reply* and *View clarification email* open the processed messages; past-date confirmation works from Additional test cases; PO correspondence opens emails in the same panel | Pass |
+| Browser, carrier tab: primary button shows the actual ETA date; delay updates three linked rows (previous D+1 → current D+6) while the remainder keeps its date; further delay, clock advance, and delivery complete the steps; carrier shows Delivered / receipt pending while warehouse received is unchanged; duplicate and older events work from Additional test cases | Pass |
+| Other browser tests (primary demo, modal, tracking/filters) | Pass (`npm run test:e2e`: 5 passed) |
+| Screenshots at 1440×900 of both tabs (fresh, and supplier after the partial reply): purpose, step, and primary button above the fold. The first capture showed the success message before the table refreshed; fixed by reloading before reporting success and re-captured | Layout as intended |
+| All browser runs used the isolated Playwright database; no reset or scenario mutation was run against `data/demo.sqlite` or any deployment | — |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:

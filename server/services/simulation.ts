@@ -3,9 +3,10 @@
 // move reconciles newly overdue conditions and due call tasks once, in one transaction. Both cases
 // anchor to the reset date: run Case A before advancing to the Case B delivery time, or reset first.
 import type { DB } from '../db/db.js';
-import { getDemoClock, getDemoDate, getMeta, setMeta } from '../db/db.js';
+import { getDemoClock, getDemoDate, getMeta, getOutreachSettings, setMeta } from '../db/db.js';
 import { HttpError } from '../errors.js';
-import { formatClock, localDate } from '../../shared/clock.js';
+import { addBusinessDays, formatClock, localDate } from '../../shared/clock.js';
+import { addDays, formatDate } from '../../shared/dates.js';
 import type { ScenarioCase, ScenariosResponse, ScenarioStep } from '../../shared/types.js';
 import { CASE_A, CASE_B } from '../db/seed.js';
 import { CARRIER_FIXTURES, REPLY_FIXTURES } from '../simulation/fixtures.js';
@@ -47,7 +48,7 @@ export function getScenarios(db: DB): ScenariosResponse {
   const demoDate = localDate(clock);
   const notInstalled = fixturesInstalled ? null : 'Reset demo data to install the scenarios.';
 
-  // Case A
+  // ---- Supplier email follow-up (Case A) ----
   const aSupplier = supplierId(db, CASE_A.supplier);
   const request = aSupplier
     ? (db.prepare('SELECT id, response_due_at AS dueAt FROM outreach_requests WHERE supplier_id = ? ORDER BY id DESC LIMIT 1').get(aSupplier) as
@@ -56,72 +57,144 @@ export function getScenarios(db: DB): ScenariosResponse {
     : undefined;
   const sentToday = aSupplier ? db.prepare('SELECT 1 FROM outreach_requests WHERE supplier_id = ? AND local_date = ?').get(aSupplier, demoDate) : undefined;
   const messageDone = (key: string) => !!db.prepare('SELECT 1 FROM supplier_messages WHERE external_message_id = ?').get(REPLY_FIXTURES[key].externalMessageId);
-  const needsRequest = request ? null : 'Simulate the send first.';
-  const replyStep = (key: string): ScenarioStep => ({
-    key,
-    kind: 'reply',
-    label: REPLY_FIXTURES[key].label,
-    blockedReason: notInstalled ?? needsRequest,
-    done: messageDone(key),
-  });
+  const needsRequest = request ? null : 'Send the request first.';
+  const dueAt = request?.dueAt ?? addBusinessDays(clock, getOutreachSettings(db).responseWindowBusinessDays);
+  const reply1Done = messageDone('case-a-reply-1');
+  const deadlinePassed = !!request && request.dueAt <= clock;
+
   const caseA: ScenarioCase = {
     key: 'A',
-    title: 'Case A: partial supplier reply across two POs',
-    summary: `${CASE_A.supplier}: ${CASE_A.poNumbers.join(' and ')}. Eight not-shipped lines are due for confirmation; the reply confirms four, revises two, is vague on one, and skips one.`,
+    title: 'Supplier email follow-up',
+    explanation: 'Request arrival confirmations, process a partial reply, and escalate unanswered items to purchasing.',
+    summary: `${CASE_A.supplier}: ${CASE_A.poNumbers.join(' and ')}.`,
     supplierId: aSupplier,
     supplierName: CASE_A.supplier,
     poIds: poIds(db, CASE_A.poNumbers),
     steps: [
-      { key: 'case-a-send', kind: 'send', label: 'Simulate send', blockedReason: notInstalled ?? (sentToday ? 'Already sent on this demo date.' : null), done: !!request },
-      replyStep('case-a-reply-1'),
+      {
+        key: 'case-a-send',
+        kind: 'send',
+        title: 'Request confirmation',
+        description: `Create one simulated request to ${CASE_A.supplier} for the selected lines, with a reply due ${formatClock(dueAt)}.`,
+        actionLabel: 'Simulate sending request',
+        blockedReason: notInstalled ?? (sentToday && !request ? 'A request already went to this supplier on this demo date.' : null),
+        done: !!request,
+      },
+      {
+        key: 'case-a-reply-1',
+        kind: 'reply',
+        title: 'Process partial reply',
+        description: 'Apply the supplier’s reply: clear confirmations and revised arrivals update their deliveries; vague or missing items are marked for follow-up.',
+        actionLabel: 'Process supplier reply',
+        blockedReason: notInstalled ?? needsRequest,
+        done: reply1Done,
+      },
       {
         key: 'case-a-deadline',
         kind: 'clock',
-        label: request ? `Advance to response deadline (${formatClock(request.dueAt)})` : 'Advance to response deadline',
-        blockedReason: notInstalled ?? needsRequest ?? (request && request.dueAt <= clock ? 'The clock is already past the deadline.' : null),
-        done: !!request && request.dueAt <= clock,
+        title: 'Reach follow-up deadline',
+        description: `Move the demo clock to the reply deadline (${formatClock(dueAt)}); items still unanswered or unclear become one call task for purchasing.`,
+        actionLabel: `Advance clock to ${formatClock(dueAt)}`,
+        blockedReason: notInstalled ?? needsRequest ?? (reply1Done ? null : 'Process the supplier reply first.'),
+        done: deadlinePassed,
       },
-      replyStep('case-a-reply-2'),
-      replyStep('case-a-reply-past'),
+      {
+        key: 'case-a-reply-2',
+        kind: 'reply',
+        title: 'Process clarification',
+        description: 'Apply the supplier’s follow-up for the open items; an unstarted call task closes as answered, and late issues stay open for the buyer.',
+        actionLabel: 'Process clarification email',
+        blockedReason: notInstalled ?? needsRequest ?? (reply1Done ? null : 'Process the supplier reply first.'),
+        done: messageDone('case-a-reply-2'),
+      },
+    ],
+    extras: [
+      {
+        key: 'case-a-reply-past',
+        kind: 'reply',
+        title: 'Past-date supplier confirmation',
+        description: `The supplier confirms ${formatDate(addDays(anchor, -1))} for unreceived material on ${CASE_A.poNumbers[1]} line 2; it shows as overdue even though dock and production dates are later.`,
+        actionLabel: 'Process past-date confirmation',
+        blockedReason: notInstalled ?? needsRequest,
+        done: messageDone('case-a-reply-past'),
+      },
     ],
   };
 
-  // Case B
+  // ---- Carrier tracking updates (Case B) ----
   const eventDone = (key: string) => !!db.prepare('SELECT 1 FROM carrier_events WHERE external_event_id = ?').get(CARRIER_FIXTURES[key].externalEventId);
-  const carrierStep = (key: string): ScenarioStep => {
-    const occurredAt = CARRIER_FIXTURES[key].occurredAt(anchor);
-    const replay = key === 'case-b-delay-replay';
-    return {
-      key,
-      kind: 'carrier',
-      label: CARRIER_FIXTURES[key].label,
-      blockedReason:
-        notInstalled ??
-        (occurredAt > clock ? `Happens at ${formatClock(occurredAt)}; advance the clock first.` : replay && !eventDone('case-b-delay') ? 'Run the delay event first.' : null),
-      done: !replay && eventDone(key),
-    };
+  const eta = (key: string) => formatDate(CARRIER_FIXTURES[key].payload(anchor).eta ?? null);
+  const delayDone = eventDone('case-b-delay');
+  const tooEarly = (key: string) => {
+    const at = CARRIER_FIXTURES[key].occurredAt(anchor);
+    return at > clock ? `The carrier reports this at ${formatClock(at)}; advance the clock first.` : null;
   };
   const deliveredAt = caseBDeliveredAt(anchor);
   const caseB: ScenarioCase = {
     key: 'B',
-    title: 'Case B: one carrier delay, several items, partial PO quantity',
-    summary: `${CASE_B.carrier} ${CASE_B.tracking} (${CASE_B.shipment}, simulated, not live) carries 30 of 50 on ${CASE_B.poNumbers[0]} line 1, ${CASE_B.poNumbers[0]} line 2, and ${CASE_B.poNumbers[1]} line 1. The other 20 on line 1 are not shipped.`,
+    title: 'Carrier tracking updates',
+    explanation: 'Apply a shipment delay to its linked items while preserving unshipped quantities and warehouse receipt status.',
+    summary: `${CASE_B.carrier} ${CASE_B.tracking} (${CASE_B.shipment}, simulated, not a live carrier).`,
     supplierId: supplierId(db, CASE_B.supplier),
     supplierName: CASE_B.supplier,
     poIds: poIds(db, CASE_B.poNumbers),
     steps: [
-      carrierStep('case-b-delay'),
-      carrierStep('case-b-delay-replay'),
-      carrierStep('case-b-older'),
-      carrierStep('case-b-later'),
+      {
+        key: 'case-b-delay',
+        kind: 'carrier',
+        title: 'Apply carrier delay',
+        description: `${CASE_B.carrier} reports a delay for ${CASE_B.tracking}: its three linked deliveries move to ${eta('case-b-delay')}; the unshipped remainder keeps its date.`,
+        actionLabel: `Apply carrier delay (ETA ${eta('case-b-delay')})`,
+        blockedReason: notInstalled ?? tooEarly('case-b-delay'),
+        done: delayDone,
+      },
+      {
+        key: 'case-b-later',
+        kind: 'carrier',
+        title: 'Apply further delay',
+        description: `A later event moves the ETA to ${eta('case-b-later')}; any delay the buyer already accepted reopens, and open issues update without duplicates.`,
+        actionLabel: `Apply further delay (ETA ${eta('case-b-later')})`,
+        blockedReason: notInstalled ?? (delayDone ? tooEarly('case-b-later') : 'Apply the carrier delay first.'),
+        done: eventDone('case-b-later'),
+      },
       {
         key: 'case-b-clock',
         kind: 'clock',
-        label: `Advance clock to carrier delivery (${formatClock(deliveredAt)})`,
-        blockedReason: notInstalled ?? (clock >= deliveredAt ? 'The clock is already there.' : null),
+        title: 'Advance to delivery time',
+        description: `Move the shared demo clock to ${formatClock(deliveredAt)}, when the carrier delivers. Dates across the dataset are evaluated against the new day.`,
+        actionLabel: `Advance clock to ${formatClock(deliveredAt)}`,
+        blockedReason: notInstalled ?? (eventDone('case-b-later') ? null : 'Apply the further delay first.'),
         done: clock >= deliveredAt,
       },
-      carrierStep('case-b-delivered'),
+      {
+        key: 'case-b-delivered',
+        kind: 'carrier',
+        title: 'Record carrier delivery',
+        description: 'The carrier reports Delivered. The shipment is marked delivered with receipt pending; warehouse Received quantities and open issues do not change.',
+        actionLabel: 'Record carrier delivery',
+        blockedReason: notInstalled ?? tooEarly('case-b-delivered'),
+        done: eventDone('case-b-delivered'),
+      },
+    ],
+    extras: [
+      {
+        key: 'case-b-delay-replay',
+        kind: 'carrier',
+        title: 'Duplicate carrier event',
+        description: 'Deliver the same delay event (same event ID) again. Expected: nothing changes.',
+        actionLabel: 'Replay duplicate event',
+        blockedReason: notInstalled ?? (delayDone ? null : 'Apply the carrier delay first.'),
+        done: false,
+      },
+      {
+        key: 'case-b-older',
+        kind: 'carrier',
+        title: 'Older carrier event',
+        description: `Deliver a previously unseen event timestamped before the latest one, with ETA ${eta('case-b-older')}. Expected: recorded as ignored; estimates unchanged.`,
+        actionLabel: 'Process older event',
+        blockedReason: notInstalled ?? (delayDone ? null : 'Apply the carrier delay first, so this event is older than the latest one.'),
+        done: eventDone('case-b-older'),
+      },
     ],
   };
   return { demoClock: clock, demoDate, fixturesInstalled, cases: [caseA, caseB] };

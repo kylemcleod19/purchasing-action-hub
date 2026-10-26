@@ -270,14 +270,30 @@ export interface MessageResultView {
   reviewReason: string | null;
 }
 
+/** A simulated email as shown to the presenter. Nothing is ever sent or received. */
+export interface EmailView {
+  from: string;
+  to: string;
+  subject: string;
+  /** Null for a sample that has not been sent or processed yet. */
+  at: string | null;
+  body: string;
+  /** True for a preview of a request or seeded reply that has not happened yet. */
+  sample: boolean;
+}
+
 export interface SupplierMessageView {
   id: number;
   direction: 'outbound' | 'inbound';
+  from: string;
+  to: string;
   recipient: string | null;
   subject: string;
   body: string;
   at: string;
   processingState: string;
+  /** Simulation fixture that produced an inbound message; null for outbound requests. */
+  fixtureKey: string | null;
   results: MessageResultView[];
 }
 
@@ -335,7 +351,12 @@ export interface CarrierEventView {
 export interface ScenarioStep {
   key: string;
   kind: 'send' | 'reply' | 'carrier' | 'clock';
-  label: string;
+  /** Short step name for the step indicator, e.g. "Process partial reply". */
+  title: string;
+  /** One sentence on what running the step will do, with actual dates. */
+  description: string;
+  /** Explicit label for the primary button, e.g. "Process supplier reply". */
+  actionLabel: string;
   /** Why the step cannot run now; null when it can. */
   blockedReason: string | null;
   done: boolean;
@@ -344,11 +365,16 @@ export interface ScenarioStep {
 export interface ScenarioCase {
   key: 'A' | 'B';
   title: string;
+  /** One-sentence purpose shown under the tab. */
+  explanation: string;
   summary: string;
   supplierId: number | null;
   supplierName: string;
   poIds: number[];
+  /** The main walkthrough, in order. The current step is the first one not done. */
   steps: ScenarioStep[];
+  /** Secondary checks kept out of the walkthrough. */
+  extras: ScenarioStep[];
 }
 
 export interface ScenariosResponse {

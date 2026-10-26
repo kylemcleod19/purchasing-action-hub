@@ -130,40 +130,48 @@ The demo records are PO **PO-DEMO-01** (Cobalt Harness Works, part HX-2210, 100 
 
 ## Scenario demos (simulated collection, PRD §13)
 
-Open **Demo scenarios** from the header link next to Incoming items (shown only when `DEMO_MODE` is on). Every control there is labeled *Simulated AI reply processing*:
-fixture playback stands in for supplier email and carrier feeds. Nothing is sent and no AI runs. Both cases
-anchor to the reset date. Run Case A before advancing the clock to Case B's delivery time, or reset in between.
+Open **Demo scenarios** from the header link next to Incoming items (shown only when `DEMO_MODE` is on). The page
+shows one scenario at a time in two tabs. Under each tab's one-line purpose, a sticky toolbar holds a step indicator,
+the current step and what it will do (with actual dates), and one primary button with an explicit label. Results
+appear in a table directly below. Progress is read back from the server, so switching tabs or refreshing never
+replays, resets, or advances anything. A step advances only after its operation succeeds; failures say nothing
+changed. Emails open read-only in a panel showing From, To, Subject, and time. Envelope buttons such as
+*Preview request email* or *View supplier reply* are visually distinct from the simulation buttons. Before a
+seeded reply is processed it can only be previewed, labeled *Sample reply*. Both scenarios share the demo clock:
+run the supplier scenario before advancing to the carrier delivery time, or reset in between. *About this demo*
+explains the fixtures; reset sits apart at the bottom and keeps its confirmation.
 
-**Case A, partial supplier reply (Kestrel Precision Machining, PO-24105 and PO-24116).** POs were created at
-D-20 with required dock D+3 and production start D+5.
-1. The preview lists eight not-shipped lines, last confirmed at D-7 and expected at D+2. It excludes line 7
-   and line 8 (confirmed within 3 business days), line 9 (received), and line 10 (usable tracking). Another
-   supplier's items show the *Below 50% of lead time* exclusion.
-2. **Simulate send** creates one simulated request to an `example.com` address with a one-business-day reply
-   deadline. A second send to the same supplier on the same demo date is refused.
-3. **Supplier reply (partial)** confirms lines 1–4 (Last update refreshes and the dates are unchanged). It revises
-   PO-24105 line 5 to D+4 (late, before start: one issue) and PO-24116 line 1 to D+7 (late and production
-   conflict). "Should ship Friday" on line 6 needs review and keeps its date. PO-24116 line 2 isn't mentioned
-   and stays awaiting. Correspondence on either PO shows the message text and the extracted-results table.
-4. **Advance to response deadline** creates one call task with the two open items. It is visible from both
-   POs' Follow-ups tab.
-5. **Clarifying reply** answers both items. The unstarted task closes as *Answered by supplier*; the late
-   issues stay open for the buyer. *Optional: past-date confirmation* sets D-1 for unreceived material, which
-   shows as overdue.
+**Supplier email follow-up (Kestrel Precision Machining, PO-24105 and PO-24116).** POs were created at D-20 with
+required dock D+3 and production start D+5.
+1. **Request confirmation** (*Simulate sending request*). The table lists the eight selected not-shipped lines,
+   last confirmed at D-7 and expected at D+2. *Why other items weren't contacted* lists line 7 and line 8
+   (confirmed within 3 business days), line 9 (received), and line 10 (usable tracking). The send records one
+   simulated request to an `example.com` address with a one-business-day reply deadline. A second send to the
+   same supplier on the same demo date is refused.
+2. **Process partial reply** (*Process supplier reply*). Lines 1–4 show *Confirmed*: Last update refreshes and
+   the dates are unchanged. PO-24105 line 5 shows *Revised* to D+4 (late, before start) and PO-24116 line 1
+   *Revised* to D+7 (late and production conflict); each links to its delivery issue. "Should ship Friday" on
+   line 6 is *Needs clarification* and keeps its date. PO-24116 line 2 shows *No reply*.
+3. **Reach follow-up deadline** (*Advance clock to …*). One call task holds the two open items. It is linked
+   from the table and visible on both POs' Follow-ups tab.
+4. **Process clarification** (*Process clarification email*). Both items are answered. The unstarted task
+   closes as *Answered by supplier*, and the late issues stay open for the buyer.
 
-**Case B, one carrier delay (Granite Bearing Co., PO-24101 and PO-24117).** Shipment SH-DEMO-01 (Demo Freight
-`DEMO-TRACK-001`, not a live carrier) carries 30 of 50 on PO-24101 line 1, PO-24101 line 2, and PO-24117
-line 1. The other 20 on line 1 are a separate not-shipped commitment.
-1. **Carrier delay** moves exactly those three rows to D+6 and opens three issues. Two are production
-   conflicts; PO-24117's is late but before start. The 20-unit remainder keeps D+2, and Shipped/Received
-   don't change.
-2. **Replay** the identical event: nothing changes. **Older event** (ETA D+1) is recorded as ignored.
-3. Accept PO-24117's delay with Manage deliveries, then run **Later delay** (D+8). That issue reopens, and
-   the open ones update without duplicates. If you edit a linked delivery's date first, that delivery is
-   held for review instead of overwritten.
-4. **Advance clock to carrier delivery**, then **Carrier reports Delivered**. The shipment shows *Delivered /
-   receipt pending*. Warehouse Received stays 0 and the issues stay open. These quantities drop out of
-   supplier outreach.
+**Carrier tracking updates (Granite Bearing Co., PO-24101 and PO-24117).** Shipment SH-DEMO-01 (Demo Freight
+`DEMO-TRACK-001`, not a live carrier) carries 30 of 50 on PO-24101 line 1, PO-24101 line 2, and PO-24117 line 1.
+The other 20 on line 1 are a separate not-shipped commitment, shown as its own row.
+1. **Apply carrier delay** moves exactly those three rows to D+6 and opens three issues. Two are production
+   conflicts; PO-24117's is late but before start. Previous and current arrivals sit side by side; the remainder
+   keeps D+2.
+2. **Apply further delay** (D+8). Any delay the buyer accepted in Manage deliveries reopens, and open issues
+   update without duplicates. If you edit a linked delivery's date first, that delivery is held for review.
+3. **Advance to delivery time** moves the shared clock to the carrier delivery time.
+4. **Record carrier delivery** shows *Delivered / receipt pending* for the carrier, separately from warehouse
+   Received, which stays unchanged, as do the issues. These quantities drop out of supplier outreach.
+
+**Additional test cases** (collapsed on each tab): duplicate carrier event (no change), older carrier event
+(recorded as ignored), and a past-date supplier confirmation (D-1 for unreceived material, shown as overdue). The
+all-supplier outreach preview is also collapsed.
 
 Outreach defaults: 3 business days without a confirmation, at least 50% of the creation-to-dock interval used,
 a 1-business-day reply window (America/Chicago, weekdays only, no holidays), and 20 PO lines per email. They

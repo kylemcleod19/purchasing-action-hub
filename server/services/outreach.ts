@@ -8,7 +8,7 @@ import { formatDate } from '../../shared/dates.js';
 import { OUTREACH_REQUEST_TEXT } from '../../shared/labels.js';
 import { selectOutreachCandidates } from '../../shared/outreach.js';
 import type { SendOutreachInput } from '../../shared/schemas.js';
-import type { OutreachCandidate, OutreachDelivery, OutreachPreview } from '../../shared/types.js';
+import type { EmailView, OutreachCandidate, OutreachDelivery, OutreachPreview } from '../../shared/types.js';
 import { addHistory } from './history.js';
 
 /** Every active delivery quantity with the facts the eligibility rule needs. */
@@ -65,6 +65,9 @@ const slug = (name: string) =>
 /** Synthetic recipient under example.com; never a real address. */
 export const supplierAddress = (supplierName: string) => `orders@${slug(supplierName)}.example.com`;
 
+/** Synthetic sender for the buyer side of simulated email. */
+export const buyerAddress = (buyer: string) => `${buyer} <purchasing@demo-buyer.example.com>`;
+
 function outboundBody(supplierName: string, buyer: string, items: OutreachCandidate[], dueAt: string, tracked: Set<number>): string {
   const lines = items.map((i) => {
     const ask =
@@ -87,6 +90,35 @@ function outboundBody(supplierName: string, buyer: string, items: OutreachCandid
     `${buyer}, Purchasing`,
     '(Simulated message for the demo; nothing was sent.)',
   ].join('\n');
+}
+
+/** The request email for these items, exactly as a send would store it. Pure composition; no writes. */
+function composeRequest(db: DB, supplierName: string, chosen: OutreachCandidate[], clock: string, windowDays: number) {
+  const dueAt = addBusinessDays(clock, windowDays);
+  const buyer = (db.prepare('SELECT buyer FROM purchase_orders WHERE id = ?').get(chosen[0].poId) as { buyer: string }).buyer;
+  const tracked = new Set(chosen.filter((c) => c.trackingUsable).map((c) => c.deliveryId));
+  return {
+    dueAt,
+    buyer,
+    recipient: supplierAddress(supplierName),
+    subject: `Arrival confirmation request: ${[...new Set(chosen.map((c) => c.poNumber))].join(', ')}`,
+    body: outboundBody(supplierName, buyer, chosen, dueAt, tracked),
+  };
+}
+
+/**
+ * Read-only preview of the request a send would create now for this supplier's eligible items.
+ * Nothing is stored; the email is labeled a sample until a send happens.
+ */
+export function previewRequestEmail(db: DB, supplierId: number): EmailView {
+  const supplier = db.prepare('SELECT id, name FROM suppliers WHERE id = ?').get(supplierId) as { id: number; name: string } | undefined;
+  if (!supplier) throw notFound('Supplier');
+  const clock = getDemoClock(db);
+  const settings = getOutreachSettings(db);
+  const items = selectOutreachCandidates(loadOutreachDeliveries(db), clock, settings).suppliers.find((s) => s.supplierId === supplier.id)?.items ?? [];
+  if (items.length === 0) throw new HttpError(409, `No items are eligible for a request to ${supplier.name} right now.`);
+  const email = composeRequest(db, supplier.name, items, clock, settings.responseWindowBusinessDays);
+  return { from: buyerAddress(email.buyer), to: email.recipient, subject: email.subject, at: null, body: email.body, sample: true };
 }
 
 export interface SendResult {
@@ -119,7 +151,8 @@ export function sendOutreach(db: DB, input: SendOutreachInput): SendResult {
       return item;
     });
 
-    const dueAt = addBusinessDays(clock, settings.responseWindowBusinessDays);
+    const email = composeRequest(db, supplier.name, chosen, clock, settings.responseWindowBusinessDays);
+    const { dueAt } = email;
     const requestId = Number(
       db
         .prepare(
@@ -134,8 +167,6 @@ export function sendOutreach(db: DB, input: SendOutreachInput): SendResult {
     );
     for (const item of chosen) insertItem.run(requestId, item.deliveryId, item.poLineId, item.quantity, item.expectedArrival, item.version);
 
-    const buyer = (db.prepare('SELECT buyer FROM purchase_orders WHERE id = ?').get(chosen[0].poId) as { buyer: string }).buyer;
-    const tracked = new Set(chosen.filter((c) => c.trackingUsable).map((c) => c.deliveryId));
     const messageId = Number(
       db
         .prepare(
@@ -145,9 +176,9 @@ export function sendOutreach(db: DB, input: SendOutreachInput): SendResult {
         .run(
           requestId,
           `OUT-${requestId}`,
-          supplierAddress(supplier.name),
-          `Arrival confirmation request: ${[...new Set(chosen.map((c) => c.poNumber))].join(', ')}`,
-          outboundBody(supplier.name, buyer, chosen, dueAt, tracked),
+          email.recipient,
+          email.subject,
+          email.body,
           clock,
         ).lastInsertRowid,
     );

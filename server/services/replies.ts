@@ -4,14 +4,16 @@
 // review without touching dates. Automation never resolves an issue. The message, all results,
 // updates, history, and task changes persist in one transaction; a duplicate message ID is a no-op.
 import type { DB } from '../db/db.js';
-import { getDemoClock, getDemoDate, getMeta } from '../db/db.js';
+import { getDemoClock, getDemoDate, getMeta, getOutreachSettings } from '../db/db.js';
 import { HttpError, notFound } from '../errors.js';
 import { localDate } from '../../shared/clock.js';
-import type { ResponseState } from '../../shared/types.js';
+import { selectOutreachCandidates } from '../../shared/outreach.js';
+import type { EmailView, ResponseState } from '../../shared/types.js';
 import { fixtureReplySource, REPLY_FIXTURES, type ExtractedResult, type ThreadItem } from '../simulation/fixtures.js';
 import { syncAfterReply } from './callTasks.js';
 import { recordArrivalUpdate } from './deliveries.js';
 import { addHistory } from './history.js';
+import { buyerAddress, loadOutreachDeliveries, supplierAddress } from './outreach.js';
 import { loadDelivery } from './issues.js';
 
 interface ItemRecord extends ThreadItem {
@@ -195,4 +197,43 @@ export function processSupplierReply(db: DB, fixtureKey: string): ReplyOutcome {
     }
     return outcome;
   })();
+}
+
+/**
+ * Read-only "sample reply" for a seeded fixture, rendered against the current thread (or, before a
+ * send, the items a send would request). Nothing is stored and nothing implies the reply arrived.
+ */
+export function previewReply(db: DB, fixtureKey: string): EmailView {
+  const fixture = REPLY_FIXTURES[fixtureKey];
+  if (!fixture) throw notFound('Reply fixture');
+  requireFixtures(db);
+  const supplier = db.prepare('SELECT id, name FROM suppliers WHERE name = ?').get(fixture.supplier) as { id: number; name: string } | undefined;
+  if (!supplier) throw notFound('Supplier');
+  const request = db.prepare('SELECT id FROM outreach_requests WHERE supplier_id = ? ORDER BY id DESC LIMIT 1').get(supplier.id) as { id: number } | undefined;
+  let items: (ThreadItem & { poId: number })[];
+  if (request) {
+    items = db
+      .prepare(
+        `SELECT p.id AS poId, p.number AS poNumber, l.line_no AS lineNo, l.part_number AS partNumber, oi.requested_qty AS requestedQty
+         FROM outreach_items oi JOIN po_lines l ON l.id = oi.po_line_id JOIN purchase_orders p ON p.id = l.po_id
+         WHERE oi.request_id = ? ORDER BY oi.id`,
+      )
+      .all(request.id) as (ThreadItem & { poId: number })[];
+  } else {
+    const settings = getOutreachSettings(db);
+    items = (selectOutreachCandidates(loadOutreachDeliveries(db), getDemoClock(db), settings).suppliers.find((s) => s.supplierId === supplier.id)?.items ?? []).map(
+      (c) => ({ poId: c.poId, poNumber: c.poNumber, lineNo: c.lineNo, partNumber: c.partNumber, requestedQty: c.quantity }),
+    );
+  }
+  if (items.length === 0) throw new HttpError(409, `No requested items for ${supplier.name} to reply about.`);
+  const buyer = (db.prepare('SELECT buyer FROM purchase_orders WHERE id = ?').get(items[0].poId) as { buyer: string }).buyer;
+  const anchor = getMeta(db, 'scenario_anchor') ?? getDemoDate(db);
+  return {
+    from: `${supplier.name} <${supplierAddress(supplier.name)}>`,
+    to: buyerAddress(buyer),
+    subject: 'RE: Arrival confirmation request',
+    at: null,
+    body: fixture.body(anchor, items, buyer),
+    sample: true,
+  };
 }

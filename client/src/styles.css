@@ -976,8 +976,7 @@ button.manage-button.needs-action {
 .events-table caption,
 .results-table caption,
 .correspondence caption,
-.call-tasks-table caption,
-.scenario caption {
+.call-tasks-table caption {
   text-align: left;
   font-weight: 600;
   font-size: 12px;
@@ -1031,31 +1030,6 @@ button.manage-button.needs-action {
 
 .scenario-clock {
   margin: 6px 0;
-}
-
-/* Case A and Case B side by side on wide screens. */
-.scenario-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
-  gap: 0 24px;
-  align-items: start;
-}
-
-.scenario {
-  border-top: 1px solid var(--border);
-  margin-top: 12px;
-  padding-top: 8px;
-}
-
-.scenario h4 {
-  margin: 8px 0 2px;
-  font-size: 13px;
-}
-
-.steps {
-  padding-left: 20px;
-  display: grid;
-  gap: 4px;
 }
 
 .ok-text {
@@ -1130,4 +1104,204 @@ button.manage-button.needs-action {
 
 .sort-button.active .sort-indicator {
   color: var(--accent);
+}
+
+/* Demo scenarios page */
+.scenarios-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.scenario-clock {
+  margin: 0;
+  font-size: 15px;
+}
+
+.scenario-notice {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.about-demo {
+  margin-bottom: 10px;
+}
+
+.scenario-explanation {
+  margin: 8px 0;
+}
+
+/* Progression controls stay in view while results scroll. */
+.scenario-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.step-indicator {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.step-indicator li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+}
+
+.step-marker {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.step-done {
+  color: var(--ok);
+}
+
+.step-done .step-marker {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.step-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.step-current .step-marker {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.toolbar-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.toolbar-main button.primary {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.blocked-reason {
+  color: var(--warn);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.toolbar-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+/* Read-only email controls: outlined and envelope-marked, never the primary blue. */
+button.email-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border-style: dashed;
+  color: var(--text);
+}
+
+.scenario-status {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.scenario-status.status-running {
+  background: var(--info-soft);
+}
+
+.scenario-status.status-success {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.scenario-status.status-error {
+  background: var(--late-soft);
+  color: var(--late);
+}
+
+.results-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.results-heading h2 {
+  margin: 4px 0;
+}
+
+.result-summary {
+  margin: 4px 0 8px;
+}
+
+td.status-confirmed {
+  color: var(--ok);
+}
+
+td.status-revised,
+td.status-needs-clarification {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+tr.remainder-row td {
+  background: var(--info-soft);
+}
+
+.carrier-context {
+  margin-bottom: 6px;
+}
+
+.scenario-section {
+  margin-top: 12px;
+}
+
+.scenario-section > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.scenario-reset {
+  margin-top: 32px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.email-notice {
+  background: var(--warn-soft);
+  color: var(--warn);
+  padding: 4px 8px;
+  border-radius: 4px;
 }
