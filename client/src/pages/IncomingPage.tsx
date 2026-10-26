@@ -23,20 +23,19 @@ import {
 import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS, OUTCOME_LABELS, sourceLabel } from '../../../shared/labels';
 import { DELIVERY_STATES, type DeliveryRow, type DeliveryState, type IncomingResponse } from '../../../shared/types';
 import type { SaveResult } from '../components/DeliveryForms';
-import { DemoScenariosDrawer } from '../components/DemoScenarios';
 import { ArrivalDate, carrierStatusText, CarrierText, DateText, Flash, LastUpdate, ProductionStartDate, reasonList, riskRowClass, StateLabel, TrackingText } from '../components/Labels';
 import { ManageDeliveriesButton, ManageDeliveriesModal } from '../components/ManageDeliveries';
 import { MultiSelect } from '../components/MultiSelect';
+import { SortableHeader } from '../components/SortableHeader';
 
 export function IncomingPage() {
-  const { dataVersion, meta } = useDemo();
+  const { dataVersion } = useDemo();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<IncomingResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modal, setModal] = useState<DeliveryRow | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -71,7 +70,7 @@ export function IncomingPage() {
     [data, matches, sort],
   );
   const header = (key: SortKey, label: string, numeric = false) => (
-    <SortableHeader key={key} sortKey={key} label={label} numeric={numeric} sort={sort} onSort={(k) => update(view, filters, nextSort(sort, k))} />
+    <SortableHeader key={key} label={label} numeric={numeric} direction={sort?.key === key ? sort.dir : null} onSort={() => update(view, filters, nextSort(sort, key))} />
   );
   const counts = useMemo(() => viewCounts(data?.rows ?? [], filters), [data, filters]);
   const anyFilter = filters.search || filters.supplier || filters.state || filters.destinations.length > 0 || filters.programs.length > 0;
@@ -98,13 +97,8 @@ export function IncomingPage() {
 
   return (
     <section>
-      <div className="page-heading with-actions">
+      <div className="page-heading">
         <h1>Incoming items</h1>
-        {meta?.demoMode && (
-          <button type="button" className="small" aria-expanded={drawerOpen} onClick={() => setDrawerOpen((o) => !o)}>
-            Demo scenarios
-          </button>
-        )}
       </div>
       <Flash message={flash} onDismiss={() => setFlash(null)} />
 
@@ -280,38 +274,7 @@ export function IncomingPage() {
           onSaved={(r) => saved(r, modal)}
         />
       )}
-      {drawerOpen && <DemoScenariosDrawer onClose={() => setDrawerOpen(false)} />}
     </section>
-  );
-}
-
-/**
- * Column header that sorts on click: ascending, descending, then back to the default demo ordering.
- * aria-sort announces the current direction.
- */
-function SortableHeader({
-  sortKey,
-  label,
-  numeric,
-  sort,
-  onSort,
-}: {
-  sortKey: SortKey;
-  label: string;
-  numeric: boolean;
-  sort: SortState | null;
-  onSort: (key: SortKey) => void;
-}) {
-  const active = sort?.key === sortKey ? sort.dir : null;
-  return (
-    <th className={numeric ? 'num' : undefined} aria-sort={active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none'}>
-      <button type="button" className={`sort-button${active ? ' active' : ''}`} onClick={() => onSort(sortKey)}>
-        {label}
-        <span className="sort-indicator" aria-hidden="true">
-          {active === 'asc' ? ' ▲' : active === 'desc' ? ' ▼' : ' ↕'}
-        </span>
-      </button>
-    </th>
   );
 }
 

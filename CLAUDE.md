@@ -6,8 +6,8 @@ and `docs/ARCHITECTURE.md` (stack, persistence, deployment). They are the author
 ## Scope guardrails
 - Each PO has exactly one work order (`purchase_orders.work_order_id`); items and deliveries inherit it.
   Do not reintroduce work-order allocation tables or split allocation grids.
-- Two views only: Incoming items and PO detail (Deliveries / Follow-ups), plus the compact Demo scenarios
-  drawer. No separate work-order, supplier, task, inventory, or dashboard modules.
+- Two views only: Incoming items and PO detail (Deliveries / Follow-ups), plus a Demo scenarios page
+  (simulation controls only, linked beside Incoming items). No separate work-order, supplier, task, inventory, or dashboard modules.
 - Excluded: PO creation/approval, sourcing, replenishment, capacity, receiving/QA, inventory, freight,
   scheduling, real email sending, live AI extraction, live integrations, adaptive cadence, accounts/roles, KPI charts.
   Supplier replies and carrier events are deterministic fixtures labeled as simulated; never fabricate extraction.

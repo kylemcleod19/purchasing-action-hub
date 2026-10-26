@@ -1,4 +1,4 @@
-// Compact "Demo scenarios" drawer (PRD §13 "UI and acceptance additions"). Every control is labeled as
+// "Demo scenarios" page (PRD §13 "UI and acceptance additions"), linked beside Incoming items. Every control is labeled as
 // a simulation: fixture playback stands in for supplier replies and carrier feeds, and nothing is sent.
 // Each step calls a real, persisted server mutation; the pages reload afterward.
 import { useCallback, useEffect, useState } from 'react';
@@ -16,10 +16,10 @@ import type {
   ScenariosResponse,
   ScenarioStep,
 } from '../../../shared/types';
-import { CallTasksTable, CorrespondenceList } from './Correspondence';
-import { ArrivalDate, carrierStatusText, StateLabel, TrackingText } from './Labels';
+import { CallTasksTable, CorrespondenceList } from '../components/Correspondence';
+import { ArrivalDate, carrierStatusText, StateLabel, TrackingText } from '../components/Labels';
 
-interface DrawerData {
+interface ScenarioData {
   scenarios: ScenariosResponse;
   preview: OutreachPreview;
   caseA: PurchaseOrderDetail | null;
@@ -27,9 +27,9 @@ interface DrawerData {
   caseBRows: DeliveryRow[];
 }
 
-export function DemoScenariosDrawer({ onClose }: { onClose: () => void }) {
-  const { dataVersion, refreshAll } = useDemo();
-  const [data, setData] = useState<DrawerData | null>(null);
+export function DemoScenariosPage() {
+  const { dataVersion, refreshAll, meta } = useDemo();
+  const [data, setData] = useState<ScenarioData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -115,20 +115,20 @@ export function DemoScenariosDrawer({ onClose }: { onClose: () => void }) {
   const caseATasks = data?.caseA?.callTasks ?? [];
   const caseBEvents = data?.caseB?.carrierEvents.filter((e) => e.externalEventId.startsWith('EVT-DEMO-TRACK-001')) ?? [];
 
+  // Simulation controls exist only in DEMO_MODE.
+  if (meta && !meta.demoMode) return <p className="empty">Demo scenarios are not available on this deployment.</p>;
+
   return (
-    <aside className="drawer" aria-label="Demo scenarios">
-      <div className="drawer-header">
-        <h2>Demo scenarios</h2>
-        <button type="button" className="link-button" onClick={onClose} aria-label="Close demo scenarios">
-          ✕
-        </button>
+    <section className="scenarios-page" aria-label="Demo scenarios">
+      <div className="page-heading">
+        <h1>Demo scenarios</h1>
       </div>
       <p className="hint">
         <strong>{SIMULATION_LABEL}.</strong> Deterministic fixtures stand in for supplier email and carrier feeds; nothing is sent and no AI runs.
         The fixtures show workflow behavior, not extraction accuracy.
       </p>
       {data && (
-        <p className="drawer-clock">
+        <p className="scenario-clock">
           Demo clock: <strong>{formatClock(data.scenarios.demoClock)}</strong> (moves only forward)
         </p>
       )}
@@ -144,6 +144,7 @@ export function DemoScenariosDrawer({ onClose }: { onClose: () => void }) {
       )}
       {data && !data.scenarios.fixturesInstalled && <p className="seed-notice">This data predates the scenarios. Reset demo data to install them.</p>}
 
+      <div className="scenario-grid">
       {caseA && (
         <section className="scenario" aria-label={caseA.title}>
           <h3>{caseA.title}</h3>
@@ -258,6 +259,8 @@ export function DemoScenariosDrawer({ onClose }: { onClose: () => void }) {
         </section>
       )}
 
+      </div>
+
       {data && (
         <details className="scenario">
           <summary>Outreach preview for all suppliers</summary>
@@ -286,7 +289,7 @@ export function DemoScenariosDrawer({ onClose }: { onClose: () => void }) {
           </p>
         </details>
       )}
-    </aside>
+    </section>
   );
 }
 

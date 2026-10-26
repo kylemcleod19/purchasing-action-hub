@@ -78,8 +78,19 @@ h3 {
   text-decoration: none;
 }
 
+.app-header nav {
+  display: flex;
+  gap: 16px;
+}
+
 .app-header nav a {
   text-decoration: none;
+}
+
+.app-header nav a.active {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .page-heading {
@@ -898,12 +909,6 @@ button.manage-button.needs-action {
   font-weight: 700;
 }
 
-.page-heading.with-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
 .toolbar.filters {
   margin-top: -4px;
 }
@@ -1024,32 +1029,16 @@ button.manage-button.needs-action {
   margin: 8px 0;
 }
 
-.drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(560px, 100%);
-  overflow-y: auto;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.12);
-  padding: 12px 16px 32px;
-  z-index: 30;
-}
-
-.drawer-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.drawer-header h2 {
-  margin: 0;
-}
-
-.drawer-clock {
+.scenario-clock {
   margin: 6px 0;
+}
+
+/* Case A and Case B side by side on wide screens. */
+.scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  gap: 0 24px;
+  align-items: start;
 }
 
 .scenario {

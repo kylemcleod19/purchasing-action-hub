@@ -2,7 +2,16 @@ import { Fragment, useCallback, useEffect, useState, type FormEvent } from 'reac
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiRequestError } from '../api';
 import { useDemo } from '../demo';
-import { arrivalDate, itemRank, prioritizeArrivals } from '../../../shared/arrivals';
+import {
+  arrivalDate,
+  compareItems,
+  itemSortParams,
+  nextItemSort,
+  parseItemSort,
+  prioritizeArrivals,
+  type ItemSort,
+  type ItemSortKey,
+} from '../../../shared/arrivals';
 import { formatDate } from '../../../shared/dates';
 import { DATE_RULES_NOTE, DELIVERY_STATE_LABELS } from '../../../shared/labels';
 import { DELIVERY_STATES, type CallTaskView, type DeliveryRow, type DeliveryState, type FollowUp, type PoLineDetail, type PurchaseOrderDetail } from '../../../shared/types';
@@ -13,6 +22,7 @@ import { CompleteFollowUpForm, FollowUpForm } from '../components/FollowUpForm';
 import { HistoryDisclosure } from '../components/HistoryDisclosure';
 import { ArrivalDate, DateText, Flash, FormErrors, riskRowClass } from '../components/Labels';
 import { ManageDeliveriesButton, ManageDeliveriesModal } from '../components/ManageDeliveries';
+import { SortableHeader } from '../components/SortableHeader';
 import { Modal } from '../components/Modal';
 import { deliveryLabel } from './IncomingPage';
 
@@ -46,6 +56,8 @@ export function PurchaseOrderPage() {
   const stateFilter = DELIVERY_STATES.includes(stateParam as DeliveryState) ? (stateParam as DeliveryState) : null;
   const issueParam = searchParams.get('issues');
   const issueFilter: IssueFilter = issueParam === 'open' || issueParam === 'resolved' ? issueParam : 'all';
+  // Items sort by line number unless a header sort is chosen; the choice lives in the URL.
+  const itemSort = parseItemSort(searchParams);
   const from = backSearch(searchParams.get('from'));
   const [data, setData] = useState<PurchaseOrderDetail | null>(null);
   const [loadError, setLoadError] = useState<{ status: number; message: string } | null>(null);
@@ -154,7 +166,33 @@ export function PurchaseOrderPage() {
   const visibleLines = lines
     .map((line) => ({ line, matching: line.deliveries.filter(matches) }))
     .filter(({ matching }) => matching.length > 0)
-    .sort((a, b) => itemRank(a.line.deliveries) - itemRank(b.line.deliveries) || a.line.lineNo - b.line.lineNo);
+    .sort(compareItems(itemSort));
+  const setItemSort = (next: ItemSort) =>
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        const value = itemSortParams(next);
+        if (value) {
+          params.set('sort', value.key);
+          params.set('dir', value.dir);
+        } else {
+          params.delete('sort');
+          params.delete('dir');
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  const header = (key: ItemSortKey, label: string, numeric = false, title?: string) => (
+    <SortableHeader
+      key={key}
+      label={label}
+      numeric={numeric}
+      title={title}
+      direction={itemSort.key === key ? itemSort.dir : null}
+      onSort={() => setItemSort(nextItemSort(itemSort, key))}
+    />
+  );
 
   return (
     <section>
@@ -264,21 +302,15 @@ export function PurchaseOrderPage() {
                       <th>
                         <span className="visually-hidden">Expand</span>
                       </th>
-                      <th className="num">Line</th>
-                      <th>Part number</th>
-                      <th>Description</th>
-                      <th>Unit</th>
-                      <th className="num" title="Full item quantity.">
-                        Ordered
-                      </th>
-                      <th className="num" title="Cumulative dispatched quantity, including received units. In transit = Shipped − Received.">
-                        Shipped
-                      </th>
-                      <th className="num" title="Cumulative received quantity. Not shipped = Ordered − Shipped.">
-                        Received
-                      </th>
-                      <th>Required dock</th>
-                      <th>Arrivals</th>
+                      {header('line', 'Line', true)}
+                      {header('part', 'Part number')}
+                      {header('description', 'Description')}
+                      {header('unit', 'Unit')}
+                      {header('ordered', 'Ordered', true, 'Full item quantity.')}
+                      {header('shipped', 'Shipped', true, 'Cumulative dispatched quantity, including received units. In transit = Shipped − Received.')}
+                      {header('received', 'Received', true, 'Cumulative received quantity. Not shipped = Ordered − Shipped.')}
+                      {header('dock', 'Required dock')}
+                      {header('arrivals', 'Arrivals')}
                       <th>Action</th>
                     </tr>
                   </thead>

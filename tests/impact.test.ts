@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compareDeliveries, meetsDateRestored, physicalRisk } from '../shared/impact.js';
 import { evaluateIssueTransition } from '../shared/issues.js';
-import { itemQuantities, itemRank, prioritizeArrivals } from '../shared/arrivals.js';
+import { compareItems, DEFAULT_ITEM_SORT, itemQuantities, itemSortParams, nextItemSort, parseItemSort, prioritizeArrivals } from '../shared/arrivals.js';
 import { addDays, formatDate, isIsoDate } from '../shared/dates.js';
 import type { DeliveryFacts, ReviewedFacts } from '../shared/types.js';
 
@@ -111,8 +111,29 @@ describe('item table rules', () => {
       row(5, { expectedArrival: '2026-11-02' }),
     ]);
     expect(ordered.map((d) => d.deliveryId)).toEqual([4, 3, 5, 2, 1]);
-    expect(itemRank(ordered)).toBe(0);
-    expect(itemRank([row(1, {})])).toBe(2);
+  });
+
+  it('sorts PO items by line by default, by a chosen column otherwise, with empty arrivals last', () => {
+    const arrival = (expectedArrival: string | null) =>
+      ({ deliveryId: 1, state: 'planned', expectedArrival, receivedAt: null, risk: { reasons: [] }, issue: null }) as never;
+    const item = (lineNo: number, orderedQty: number, arrivals: (string | null)[]) => ({
+      line: { lineNo, partNumber: `P-${lineNo}`, description: 'd', unit: 'EA', orderedQty, shippedQty: 0, receivedQty: 0, requiredDock: '2026-11-05' },
+      matching: arrivals.map(arrival),
+    });
+    const items = [item(3, 10, ['2026-11-04']), item(1, 30, [null]), item(2, 10, ['2026-11-09', '2026-11-01'])];
+    const lines = (sort: Parameters<typeof compareItems>[0]) => [...items].sort(compareItems(sort)).map((i) => i.line.lineNo);
+    expect(lines(DEFAULT_ITEM_SORT)).toEqual([1, 2, 3]);
+    // Ties keep line order; Arrivals uses the earliest shown date; unknown-only items go last both ways.
+    expect(lines({ key: 'ordered', dir: 'asc' })).toEqual([2, 3, 1]);
+    expect(lines({ key: 'arrivals', dir: 'asc' })).toEqual([2, 3, 1]);
+    expect(lines({ key: 'arrivals', dir: 'desc' })).toEqual([3, 2, 1]);
+    // Click cycle returns to line order; the default needs no URL parameters.
+    expect(nextItemSort(DEFAULT_ITEM_SORT, 'ordered')).toEqual({ key: 'ordered', dir: 'asc' });
+    expect(nextItemSort({ key: 'ordered', dir: 'desc' }, 'ordered')).toEqual(DEFAULT_ITEM_SORT);
+    expect(nextItemSort(DEFAULT_ITEM_SORT, 'line')).toEqual({ key: 'line', dir: 'desc' });
+    expect(itemSortParams(DEFAULT_ITEM_SORT)).toBeNull();
+    expect(parseItemSort(new URLSearchParams('sort=ordered&dir=desc'))).toEqual({ key: 'ordered', dir: 'desc' });
+    expect(parseItemSort(new URLSearchParams('sort=nope'))).toEqual(DEFAULT_ITEM_SORT);
   });
 
   it('sorts rows by open issue, production conflict, start, dock, id', () => {

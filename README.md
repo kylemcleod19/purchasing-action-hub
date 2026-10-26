@@ -16,8 +16,8 @@ follow up on. They can record agreed arrival changes and delivery splits.
   issue and white otherwise. Received-only rows open it read-only as **View deliveries**.
 - **Shipment tracking in the seed:** every in-transit and received delivery has a shipment with a fictional
   carrier and a synthetic tracking number (`DEMO-TRACK-###`), except one deliberately untracked dispatch.
-- **Two simulated collection scenarios** (PRD §13), driven by deterministic fixtures from a **Demo scenarios**
-  drawer: Case A (supplier outreach, partial reply, call task at the deadline) and Case B (one carrier delay
+- **Two simulated collection scenarios** (PRD §13), driven by deterministic fixtures from the **Demo scenarios**
+  page (linked next to Incoming items): Case A (supplier outreach, partial reply, call task at the deadline) and Case B (one carrier delay
   across several items). They make real, persisted changes through the same update and issue services.
 - **Actions that persist:** expected-arrival updates (date or unknown, source, optional note), splits of
   not-shipped deliveries, issue resolution (alone or with the edit, in one save), optional reminders, call
@@ -96,7 +96,7 @@ endpoint and the simulation controls; default `true`), `NODE_ENV`.
 Business dates are generated relative to a **demo date**, which is stored when the database is first
 seeded and shown in the banner. A simulated **demo clock** (stored in UTC, shown in America/Chicago) starts at
 10:00 local time on that date. Normal browsing and restarts never move either one. Only the explicit
-**Advance** controls in the Demo scenarios drawer move the clock, and only forward. Each move reconciles
+**Advance** controls on the Demo scenarios page move the clock, and only forward. Each move reconciles
 newly overdue deliveries and due call tasks once. **Reset demo data** (in the banner, with a confirmation)
 replaces all data with the baseline, clears simulated messages, tasks, and carrier events, and sets the demo
 date and clock to the current UTC date. Reset is a demo utility, not a workflow, and it affects every
@@ -130,7 +130,7 @@ The demo records are PO **PO-DEMO-01** (Cobalt Harness Works, part HX-2210, 100 
 
 ## Scenario demos (simulated collection, PRD §13)
 
-Open **Demo scenarios** on Incoming items. Every control there is labeled *Simulated AI reply processing*:
+Open **Demo scenarios** from the header link next to Incoming items (shown only when `DEMO_MODE` is on). Every control there is labeled *Simulated AI reply processing*:
 fixture playback stands in for supplier email and carrier feeds. Nothing is sent and no AI runs. Both cases
 anchor to the reset date. Run Case A before advancing the clock to Case B's delivery time, or reset in between.
 

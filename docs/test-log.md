@@ -78,6 +78,22 @@ Not run for this revision: `docker build`, container restart and redeploy persis
 | Browser: first column reads "PO · Line item"; clicking Qty sorts ascending then descending with `aria-sort`, survives reload via `sort`/`dir` URL params, and a third click restores the default order | Pass (`npm run test:e2e`: 5 passed) |
 | `npm run build` | Pass |
 
+## 2026-10-26: Demo scenarios moved to its own page (UI only)
+
+| Check | Result |
+|---|---|
+| Browser: header nav shows Incoming items then Demo scenarios; the link opens `/demo-scenarios` with the active style; Case A and Case B walkthroughs pass on the page; Incoming no longer has the drawer button | Pass (`npm run test:e2e`: 5 passed) |
+| `npm test` / `npm run build` | 66 passed / pass |
+| Screenshot of `/demo-scenarios` at 1440×900: Case A and Case B side by side | Layout as intended |
+
+## 2026-10-26: sortable PO item headers, line-number default (UI only)
+
+| Check | Result |
+|---|---|
+| Unit test: PO items default to line order; column sort with ties in line order; Arrivals sorts by the earliest shown date with unknown-only items last both ways; click cycle returns to line order; default needs no URL parameters; unknown sort keys ignored | Pass (`npm test`: 67 passed) |
+| Browser (10-item PO with an item holding three open issues): rows stay in line order 1–10; Line shows `aria-sort="ascending"`; Ordered sorts ascending then descending, survives reload, and a third click restores line order; Line toggles 10→1 and back; the Ordered tooltip is kept | Pass (`npm run test:e2e`: 5 passed, run twice) |
+| `npm run build` | Pass |
+
 ## Pending
 
 - Railway deployment has not been done. The local Railway CLI session is logged out. Still to verify:
