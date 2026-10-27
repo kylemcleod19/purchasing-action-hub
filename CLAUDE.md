@@ -31,3 +31,14 @@ and `docs/ARCHITECTURE.md` (stack, persistence, deployment). They are the author
 ## Working style
 Make small, targeted changes. No unrelated refactors, new frameworks, or speculative abstractions. Run the
 affected tests and finish with `npm run build`. Record checks actually run in `docs/test-log.md`.
+
+## Live demo mode
+When I say "demo mode":
+- Make the smallest change that delivers the request. One concern per prompt. No refactors, renames, or new files unless asked.
+- Don't ask clarifying questions; pick the obvious reading, then say in one line what you assumed.
+- Prefer changes in `shared/labels.ts`, client components, and fixtures. Don't touch migrations,
+  `shared/issues.ts`, `shared/impact.ts`, or `server/services/` unless the request requires it, and say so first if it does.
+- No new dependencies, no schema changes, no `db:reset` unless I ask.
+- Verify with `npm run typecheck` plus the single relevant test file (e.g. `npx vitest run tests/api.test.ts`).
+  Skip `npm run build`, e2e, and `docs/test-log.md` during the demo.
+- Reply in 2–3 lines: what changed, which file, and what was checked.
